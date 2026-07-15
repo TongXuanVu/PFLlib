@@ -21,7 +21,18 @@ class FedProx(Server):
 
 
     def train(self):
-        for i in range(self.global_rounds+1):
+        start_round = 0
+        if hasattr(self.args, 'mode') and self.args.mode in ['resume', 'test']:
+            start_round = self.args.resume_round
+            print(f"\nLoading model from round {start_round}...")
+            self.load_model(start_round)
+
+        if hasattr(self.args, 'mode') and self.args.mode == 'test':
+            print(f"\n-------------Testing Round: {start_round}-------------")
+            self.evaluate(round_num=start_round)
+            return
+
+        for i in range(start_round, self.global_rounds+1):
             s_t = time.time()
             self.selected_clients = self.select_clients()
             self.send_models()
@@ -29,7 +40,7 @@ class FedProx(Server):
             if i%self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
                 print("\nEvaluate global model")
-                self.evaluate()
+                self.evaluate(round_num=i)
 
             for client in self.selected_clients:
                 client.train()
@@ -44,10 +55,12 @@ class FedProx(Server):
                 self.call_dlg(i)
             self.aggregate_parameters()
 
+            self.save_global_model(round_num=i)
+
             self.Budget.append(time.time() - s_t)
             print('-'*25, 'time cost', '-'*25, self.Budget[-1])
 
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            if self.auto_break and hasattr(self, 'rs_test_acc') and len(self.rs_test_acc) > 0 and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
                 break
 
         print("\nBest accuracy.")
