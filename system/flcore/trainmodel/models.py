@@ -523,3 +523,47 @@ class TextCNN(nn.Module):
 #   @staticmethod
 #   def backward(ctx, grad_output):
 #     return grad_output
+
+class CNN1D(nn.Module):
+    def __init__(self, input_dim=31, num_classes=34): 
+        super(CNN1D, self).__init__()
+        
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm1d(32)
+        self.pool1 = nn.MaxPool1d(kernel_size=2)
+        
+        self.conv2 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm1d(64)
+        self.pool2 = nn.MaxPool1d(kernel_size=2)
+        
+        # Use AdaptiveAvgPool1d to handle variable input dimensions
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(8)
+        
+        self.fc1 = nn.Linear(64 * 8, 128)
+        self.dropout = nn.Dropout(0.3)
+        self.fc2 = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        # Reshape to (batch_size, channels, sequence_length)
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+        
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = F.relu(x)
+        x = self.pool1(x)
+        
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = F.relu(x)
+        x = self.pool2(x)
+        
+        x = self.adaptive_pool(x)
+        x = x.view(x.size(0), -1)
+        
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.dropout(x)
+        
+        x = self.fc2(x)
+        return x

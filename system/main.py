@@ -108,6 +108,9 @@ def run(args):
                 args.model = DNN(3*32*32, 100, num_classes=args.num_classes).to(args.device)
             else:
                 args.model = DNN(60, 20, num_classes=args.num_classes).to(args.device)
+
+        elif model_str == "CNN1D":
+            args.model = CNN1D(input_dim=31, num_classes=args.num_classes).to(args.device)
         
         elif model_str == "ResNet18":
             args.model = torchvision.models.resnet18(pretrained=False, num_classes=args.num_classes).to(args.device)
@@ -390,6 +393,8 @@ if __name__ == "__main__":
     # general
     parser.add_argument('-go', "--goal", type=str, default="test", 
                         help="The goal for this experiment")
+    parser.add_argument('-mode', "--mode", type=str, default="train", choices=["train", "test", "resume"])
+    parser.add_argument('-rr', "--resume_round", type=int, default=0)
     parser.add_argument('-dev', "--device", type=str, default="cuda",
                         choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")

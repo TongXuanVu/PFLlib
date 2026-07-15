@@ -79,14 +79,12 @@ class Client(object):
 
     def test_metrics(self):
         testloaderfull = self.load_test_data()
-        # self.model = self.load_model('model')
-        # self.model.to(self.device)
         self.model.eval()
 
         test_acc = 0
         test_num = 0
-        y_prob = []
-        y_true = []
+        test_loss = 0.0
+        confusion_matrix = np.zeros((self.num_classes, self.num_classes), dtype=np.int64)
         
         with torch.no_grad():
             for x, y in testloaderfull:
@@ -97,27 +95,18 @@ class Client(object):
                 y = y.to(self.device)
                 output = self.model(x)
 
-                test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                loss = self.loss(output, y)
+                test_loss += loss.item() * y.shape[0]
+
+                preds = torch.argmax(output, dim=1)
+                test_acc += (torch.sum(preds == y)).item()
                 test_num += y.shape[0]
 
-                y_prob.append(output.detach().cpu().numpy())
-                nc = self.num_classes
-                if self.num_classes == 2:
-                    nc += 1
-                lb = label_binarize(y.detach().cpu().numpy(), classes=np.arange(nc))
-                if self.num_classes == 2:
-                    lb = lb[:, :2]
-                y_true.append(lb)
+                from sklearn.metrics import confusion_matrix as sk_cm
+                cm = sk_cm(y.cpu().numpy(), preds.cpu().numpy(), labels=np.arange(self.num_classes))
+                confusion_matrix += cm
 
-        # self.model.cpu()
-        # self.save_model(self.model, 'model')
-
-        y_prob = np.concatenate(y_prob, axis=0)
-        y_true = np.concatenate(y_true, axis=0)
-
-        auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
-        
-        return test_acc, test_num, auc
+        return test_acc, test_num, test_loss, confusion_matrix
 
     def train_metrics(self):
         trainloader = self.load_train_data()

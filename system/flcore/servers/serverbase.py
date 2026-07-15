@@ -149,16 +149,22 @@ class Server(object):
         for server_param, client_param in zip(self.global_model.parameters(), client_model.parameters()):
             server_param.data += client_param.data.clone() * w
 
-    def save_global_model(self):
+    def save_global_model(self, round_num=None):
         model_path = os.path.join("models", self.dataset)
         if not os.path.exists(model_path):
             os.makedirs(model_path)
-        model_path = os.path.join(model_path, self.algorithm + "_server" + ".pt")
+        if round_num is not None:
+            model_path = os.path.join(model_path, f"{self.algorithm}_server_round_{round_num}.pt")
+        else:
+            model_path = os.path.join(model_path, self.algorithm + "_server" + ".pt")
         torch.save(self.global_model, model_path)
 
-    def load_model(self):
+    def load_model(self, round_num=None):
         model_path = os.path.join("models", self.dataset)
-        model_path = os.path.join(model_path, self.algorithm + "_server" + ".pt")
+        if round_num is not None:
+            model_path = os.path.join(model_path, f"{self.algorithm}_server_round_{round_num}.pt")
+        else:
+            model_path = os.path.join(model_path, self.algorithm + "_server" + ".pt")
         assert (os.path.exists(model_path))
         self.global_model = torch.load(model_path)
 
@@ -198,59 +204,59 @@ class Server(object):
         
         num_samples = []
         tot_correct = []
-        tot_auc = []
+        tot_losses = []
+        confusion_matrices = []
         for c in self.clients:
-            ct, ns, auc = c.test_metrics()
+            ct, ns, loss, cm = c.test_metrics()
             tot_correct.append(ct*1.0)
-            tot_auc.append(auc*ns)
+            tot_losses.append(loss)
             num_samples.append(ns)
+            confusion_matrices.append(cm)
 
         ids = [c.id for c in self.clients]
 
-        return ids, num_samples, tot_correct, tot_auc
+        return ids, num_samples, tot_correct, tot_losses, confusion_matrices
 
-    def train_metrics(self):
-        if self.eval_new_clients and self.num_new_clients > 0:
-            return [0], [1], [0]
-        
-        num_samples = []
-        losses = []
-        for c in self.clients:
-            cl, ns = c.train_metrics()
-            num_samples.append(ns)
-            losses.append(cl*1.0)
-
-        ids = [c.id for c in self.clients]
-
-        return ids, num_samples, losses
-
-    # evaluate selected clients
-    def evaluate(self, acc=None, loss=None):
+    def evaluate(self, round_num=0):
         stats = self.test_metrics()
-        stats_train = self.train_metrics()
+        
+        # global metrics
+        global_cm = np.sum(stats[4], axis=0)
+        TP = np.diag(global_cm)
+        FP = global_cm.sum(axis=0) - TP
+        FN = global_cm.sum(axis=1) - TP
+        
+        micro_p = TP.sum() / (TP.sum() + FP.sum() + 1e-12)
+        micro_r = TP.sum() / (TP.sum() + FN.sum() + 1e-12)
+        micro_f1 = 2 * micro_p * micro_r / (micro_p + micro_r + 1e-12)
+        
+        macro_p = np.mean(TP / (TP + FP + 1e-12))
+        macro_r = np.mean(TP / (TP + FN + 1e-12))
+        macro_f1 = np.mean(2 * (TP / (TP + FP + 1e-12)) * (TP / (TP + FN + 1e-12)) / ((TP / (TP + FP + 1e-12)) + (TP / (TP + FN + 1e-12)) + 1e-12))
+        
+        weights = global_cm.sum(axis=1)
+        total = weights.sum()
+        weighted_p = np.sum(weights * (TP / (TP + FP + 1e-12))) / total
+        weighted_r = np.sum(weights * (TP / (TP + FN + 1e-12))) / total
+        weighted_f1 = np.sum(weights * 2 * (TP / (TP + FP + 1e-12)) * (TP / (TP + FN + 1e-12)) / ((TP / (TP + FP + 1e-12)) + (TP / (TP + FN + 1e-12)) + 1e-12)) / total
 
         test_acc = sum(stats[2])*1.0 / sum(stats[1])
-        test_auc = sum(stats[3])*1.0 / sum(stats[1])
-        train_loss = sum(stats_train[2])*1.0 / sum(stats_train[1])
-        accs = [a / n for a, n in zip(stats[2], stats[1])]
-        aucs = [a / n for a, n in zip(stats[3], stats[1])]
+        test_loss = sum(stats[3])*1.0 / sum(stats[1])
         
-        if acc == None:
-            self.rs_test_acc.append(test_acc)
-        else:
-            acc.append(test_acc)
+        print(f"Round {round_num} - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}, Micro F1: {micro_f1:.4f}, Macro F1: {macro_f1:.4f}, Weighted F1: {weighted_f1:.4f}")
         
-        if loss == None:
-            self.rs_train_loss.append(train_loss)
-        else:
-            loss.append(train_loss)
-
-        print("Averaged Train Loss: {:.4f}".format(train_loss))
-        print("Averaged Test Accuracy: {:.4f}".format(test_acc))
-        print("Averaged Test AUC: {:.4f}".format(test_auc))
-        # self.print_(test_acc, train_acc, train_loss)
-        print("Std Test Accuracy: {:.4f}".format(np.std(accs)))
-        print("Std Test AUC: {:.4f}".format(np.std(aucs)))
+        import pandas as pd
+        csv_file = f"../results/{self.dataset}_{self.algorithm}_metrics.csv"
+        if not os.path.exists(csv_file):
+            df = pd.DataFrame(columns=['Round', 'Loss', 'Accuracy', 'Micro_P', 'Micro_R', 'Micro_F1', 'Macro_P', 'Macro_R', 'Macro_F1', 'Weighted_P', 'Weighted_R', 'Weighted_F1'])
+            df.to_csv(csv_file, index=False)
+            
+        row = {'Round': round_num, 'Loss': test_loss, 'Accuracy': test_acc, 
+               'Micro_P': micro_p, 'Micro_R': micro_r, 'Micro_F1': micro_f1,
+               'Macro_P': macro_p, 'Macro_R': macro_r, 'Macro_F1': macro_f1,
+               'Weighted_P': weighted_p, 'Weighted_R': weighted_r, 'Weighted_F1': weighted_f1}
+        df = pd.DataFrame([row])
+        df.to_csv(csv_file, mode='a', header=False, index=False)
 
     def print_(self, test_acc, test_auc, train_loss):
         print("Average Test Accuracy: {:.4f}".format(test_acc))

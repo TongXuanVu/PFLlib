@@ -17,6 +17,22 @@ def read_data(dataset, idx, is_train=True):
 
 
 def read_client_data(dataset, idx, is_train=True, few_shot=0):
+    if dataset == "IoV":
+        base_path = "C:/FederatedLearning/FL/core/data iov"
+        if os.path.exists("/kaggle/input/datasets/tongxuanvu/ids-iov"): # Đường dẫn thực tế trên Kaggle của bạn
+            base_path = "/kaggle/input/datasets/tongxuanvu/ids-iov"
+            
+        if is_train:
+            pt_path = f"{base_path}/federated_data/client_{idx}.pt"
+            data = torch.load(pt_path)
+            dataset_obj = torch.utils.data.TensorDataset(data['x'].float(), data['y'].long())
+            return dataset_obj
+        else:
+            pt_path = f"{base_path}/global_test_data.pt"
+            data = torch.load(pt_path)
+            dataset_obj = torch.utils.data.TensorDataset(data['x'].float(), data['y'].long())
+            return dataset_obj
+
     data = read_data(dataset, idx, is_train)
     if "News" in dataset:
         data_list = process_text(data)
