@@ -1,6 +1,8 @@
 import copy
+import os
 import time
 import numpy as np
+import pandas as pd
 from flcore.clients.clientperavg import clientPerAvg
 from flcore.servers.serverbase import Server
 from threading import Thread
@@ -14,7 +16,16 @@ class PerAvg(Server):
         self.set_slow_clients()
         self.set_clients(clientPerAvg)
 
+        # How many times client.train() runs per round. PFLlib upstream calls
+        # it twice; -plp 1 halves the training cost per round and matches the
+        # single local update loop described in the Per-FedAvg paper. Left at
+        # 2 by default so existing runs stay comparable.
+        self.local_passes = max(1, int(getattr(args, 'peravg_local_passes', 2)))
+        # Write a server checkpoint every save_gap rounds (plus the last one).
+        self.save_gap = max(1, int(getattr(args, 'save_gap', 1)))
+
         print(f"\nJoin ratio / total clients: {self.join_ratio} / {self.num_clients}")
+        print(f"Local passes per round: {self.local_passes} | checkpoint every {self.save_gap} round(s)")
         print("Finished creating server and clients.")
         self.Budget = []
 
@@ -36,15 +47,20 @@ class PerAvg(Server):
             # send all parameter for clients
             self.send_models()
 
+            eval_cost = 0.0
             if i%self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
                 print("\nEvaluate global model with one step update")
+                e_t = time.time()
                 self.evaluate_one_step(round_num=i)
+                eval_cost = time.time() - e_t
 
             # choose several clients to send back upated model to server
+            t_t = time.time()
             for client in self.selected_clients:
-                client.train()
-                client.train()
+                for _ in range(self.local_passes):
+                    client.train()
+            train_cost = time.time() - t_t
 
             # threads = [Thread(target=client.train)
             #            for client in self.selected_clients]
@@ -56,20 +72,22 @@ class PerAvg(Server):
                 self.call_dlg(i)
             self.aggregate_parameters()
 
-            self.save_global_model(round_num=i)
+            if i % self.save_gap == 0 or i == self.global_rounds:
+                self.save_global_model(round_num=i)
 
             self.Budget.append(time.time() - s_t)
             print('-'*25, 'time cost', '-'*25, self.Budget[-1])
+            print(f"    (eval {eval_cost:.1f}s | train {train_cost:.1f}s)")
 
             if self.auto_break and hasattr(self, 'rs_test_acc') and len(self.rs_test_acc) > 0 and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
                 break
 
         print("\nBest accuracy.")
-        # self.print_(max(self.rs_test_acc), max(
-        #     self.rs_train_acc), min(self.rs_train_loss))
-        print(max(self.rs_test_acc))
+        if self.rs_test_acc:
+            print(max(self.rs_test_acc))
         print("\nAverage time cost per round.")
-        print(sum(self.Budget[1:])/len(self.Budget[1:]))
+        if len(self.Budget) > 1:
+            print(sum(self.Budget[1:])/len(self.Budget[1:]))
 
         self.save_results()
 
@@ -114,11 +132,17 @@ class PerAvg(Server):
         test_acc = sum(stats[2])*1.0 / sum(stats[1])
         test_loss = sum(stats[3])*1.0 / sum(stats[1])
         
+        # evaluate_one_step used to append nothing, so rs_test_acc stayed
+        # empty: save_results() wrote no .h5 and max(self.rs_test_acc) at the
+        # end of train() raised ValueError on an empty sequence.
+        self.rs_test_acc.append(test_acc)
+        self.rs_train_loss.append(test_loss)
+        self.rs_test_auc.append(macro_f1)  # slot kept for schema compatibility
+
         print(f"Round {round_num} - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}, Micro F1: {micro_f1:.4f}, Macro F1: {macro_f1:.4f}, Weighted F1: {weighted_f1:.4f}")
         
-        import pandas as pd
-        import os
         csv_file = f"../results/{self.dataset}_{self.algorithm}_metrics.csv"
+        os.makedirs(os.path.dirname(csv_file), exist_ok=True)
         if not os.path.exists(csv_file):
             df = pd.DataFrame(columns=['Round', 'Loss', 'Accuracy', 'Micro_P', 'Micro_R', 'Micro_F1', 'Macro_P', 'Macro_R', 'Macro_F1', 'Weighted_P', 'Weighted_R', 'Weighted_F1'])
             df.to_csv(csv_file, index=False)

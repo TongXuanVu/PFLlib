@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
 from utils.data_utils import read_client_data
+from utils.fast_loader import TensorBatches
 
 
 class Client(object):
@@ -27,6 +28,12 @@ class Client(object):
         self.train_samples = train_samples
         self.test_samples = test_samples
         self.batch_size = args.batch_size
+        # Evaluation has no gradients and no optimiser state, so it can use a
+        # far larger batch than training. Keeping them separate stops the
+        # training batch size (10 by default) from turning a 42M-row test pass
+        # into 4.2M tiny kernel launches. Metrics are batch-size independent:
+        # accuracy, summed loss and the confusion matrix all come out the same.
+        self.test_batch_size = getattr(args, 'test_batch_size', 8192)
         self.learning_rate = args.local_learning_rate
         self.local_epochs = args.local_epochs
         self.few_shot = args.few_shot
@@ -56,12 +63,20 @@ class Client(object):
         if batch_size == None:
             batch_size = self.batch_size
         train_data = read_client_data(self.dataset, self.id, is_train=True, few_shot=self.few_shot)
+        if self.dataset == "IoV":
+            x, y = train_data.tensors
+            return TensorBatches(x, y, batch_size, shuffle=True, drop_last=True)
         return DataLoader(train_data, batch_size, drop_last=True, shuffle=True)
 
     def load_test_data(self, batch_size=None):
         if batch_size == None:
-            batch_size = self.batch_size
+            batch_size = self.test_batch_size
         test_data = read_client_data(self.dataset, self.id, is_train=False, few_shot=self.few_shot)
+        if self.dataset == "IoV":
+            # No shuffle: the metrics are order-independent, and shuffling
+            # would cost a 42M-element randperm per client per round.
+            return TensorBatches(x=test_data.tensors[0], y=test_data.tensors[1],
+                                 batch_size=batch_size, shuffle=False, drop_last=False)
         return DataLoader(test_data, batch_size, drop_last=False, shuffle=True)
         
     def set_parameters(self, model):
@@ -81,11 +96,19 @@ class Client(object):
         testloaderfull = self.load_test_data()
         self.model.eval()
 
-        test_acc = 0
+        C = self.num_classes
+
+        # Everything is accumulated on the model's device and read back once,
+        # after the loop. The previous version called .item() twice and
+        # sklearn.metrics.confusion_matrix once per batch: three CPU/GPU
+        # synchronisations and a host round-trip of every prediction, per batch.
+        acc_t = torch.zeros((), dtype=torch.long, device=self.device)
+        loss_t = torch.zeros((), dtype=torch.float64, device=self.device)
+        # Flat (C*C + 1) histogram; index = true * C + pred. The extra last
+        # bucket collects labels outside [0, C), which sklearn silently drops.
+        cm_flat = torch.zeros(C * C + 1, dtype=torch.long, device=self.device)
         test_num = 0
-        test_loss = 0.0
-        confusion_matrix = np.zeros((self.num_classes, self.num_classes), dtype=np.int64)
-        
+
         with torch.no_grad():
             for x, y in testloaderfull:
                 if type(x) == type([]):
@@ -96,15 +119,23 @@ class Client(object):
                 output = self.model(x)
 
                 loss = self.loss(output, y)
-                test_loss += loss.item() * y.shape[0]
+                loss_t += loss.double() * y.shape[0]
 
                 preds = torch.argmax(output, dim=1)
-                test_acc += (torch.sum(preds == y)).item()
+                acc_t += (preds == y).sum()
                 test_num += y.shape[0]
 
-                from sklearn.metrics import confusion_matrix as sk_cm
-                cm = sk_cm(y.cpu().numpy(), preds.cpu().numpy(), labels=np.arange(self.num_classes))
-                confusion_matrix += cm
+                # Same layout as
+                #   sklearn.metrics.confusion_matrix(y, preds, labels=arange(C))
+                # rows = true label, cols = predicted label.
+                in_range = (y >= 0) & (y < C)
+                idx = torch.where(in_range, y * C + preds,
+                                  torch.full_like(y, C * C))
+                cm_flat += torch.bincount(idx, minlength=C * C + 1)
+
+        test_acc = int(acc_t.item())
+        test_loss = float(loss_t.item())
+        confusion_matrix = cm_flat[:C * C].reshape(C, C).cpu().numpy()
 
         return test_acc, test_num, test_loss, confusion_matrix
 

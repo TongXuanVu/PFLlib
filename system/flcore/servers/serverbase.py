@@ -166,7 +166,13 @@ class Server(object):
         else:
             model_path = os.path.join(model_path, self.algorithm + "_server" + ".pt")
         assert (os.path.exists(model_path))
-        self.global_model = torch.load(model_path)
+        # The checkpoint is a pickled nn.Module, not a state_dict. From torch
+        # 2.6 onwards torch.load defaults to weights_only=True and refuses it,
+        # which broke -mode resume. The file is written by this same script.
+        try:
+            self.global_model = torch.load(model_path, weights_only=False)
+        except TypeError:  # torch < 1.13 has no weights_only argument
+            self.global_model = torch.load(model_path)
 
     def model_exists(self):
         model_path = os.path.join("models", self.dataset)
@@ -243,10 +249,15 @@ class Server(object):
         test_acc = sum(stats[2])*1.0 / sum(stats[1])
         test_loss = sum(stats[3])*1.0 / sum(stats[1])
         
+        self.rs_test_acc.append(test_acc)
+        self.rs_train_loss.append(test_loss)
+        self.rs_test_auc.append(macro_f1)  # slot kept for schema compatibility
+
         print(f"Round {round_num} - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}, Micro F1: {micro_f1:.4f}, Macro F1: {macro_f1:.4f}, Weighted F1: {weighted_f1:.4f}")
         
         import pandas as pd
         csv_file = f"../results/{self.dataset}_{self.algorithm}_metrics.csv"
+        os.makedirs(os.path.dirname(csv_file), exist_ok=True)
         if not os.path.exists(csv_file):
             df = pd.DataFrame(columns=['Round', 'Loss', 'Accuracy', 'Micro_P', 'Micro_R', 'Micro_F1', 'Macro_P', 'Macro_R', 'Macro_F1', 'Weighted_P', 'Weighted_R', 'Weighted_F1'])
             df.to_csv(csv_file, index=False)

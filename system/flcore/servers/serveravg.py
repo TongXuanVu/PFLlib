@@ -16,6 +16,7 @@ class FedAvg(Server):
         print("Finished creating server and clients.")
 
         # self.load_model()
+        self.save_gap = max(1, int(getattr(args, 'save_gap', 1)))
         self.Budget = []
 
 
@@ -54,7 +55,8 @@ class FedAvg(Server):
                 self.call_dlg(i)
             self.aggregate_parameters()
 
-            self.save_global_model(round_num=i)
+            if i % self.save_gap == 0 or i == self.global_rounds:
+                self.save_global_model(round_num=i)
 
             self.Budget.append(time.time() - s_t)
             print('-'*25, 'time cost', '-'*25, self.Budget[-1])
@@ -65,9 +67,11 @@ class FedAvg(Server):
         print("\nBest accuracy.")
         # self.print_(max(self.rs_test_acc), max(
         #     self.rs_train_acc), min(self.rs_train_loss))
-        print(max(self.rs_test_acc))
+        if self.rs_test_acc:
+            print(max(self.rs_test_acc))
         print("\nAverage time cost per round.")
-        print(sum(self.Budget[1:])/len(self.Budget[1:]))
+        if len(self.Budget) > 1:
+            print(sum(self.Budget[1:])/len(self.Budget[1:]))
 
         self.save_results()
         self.save_global_model()

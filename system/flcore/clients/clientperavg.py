@@ -18,6 +18,21 @@ class clientPerAvg(Client):
             optimizer=self.optimizer, 
             gamma=args.learning_rate_decay_gamma
         )
+        # Reused buffer holding the parameters as they were before step 1.
+        # The original code rebuilt this with copy.deepcopy on every batch.
+        self._param_backup = None
+
+    def _snapshot_params(self):
+        params = list(self.model.parameters())
+        if self._param_backup is None:
+            self._param_backup = [p.detach().clone() for p in params]
+        else:
+            for buf, p in zip(self._param_backup, params):
+                buf.copy_(p.data)
+
+    def _restore_params(self):
+        for p, buf in zip(self.model.parameters(), self._param_backup):
+            p.data.copy_(buf)
 
     def train(self):
         trainloader = self.load_train_data(self.batch_size*2)
@@ -32,7 +47,10 @@ class clientPerAvg(Client):
 
         for epoch in range(max_local_epochs):  # local update
             for X, Y in trainloader:
-                temp_model = copy.deepcopy(list(self.model.parameters()))
+                # Was: temp_model = copy.deepcopy(list(self.model.parameters()))
+                # A full model copy allocated once per batch. Copying into a
+                # preallocated buffer gives the same values with no allocation.
+                self._snapshot_params()
 
                 # step 1
                 if type(X) == type([]):
@@ -66,8 +84,7 @@ class clientPerAvg(Client):
                 loss.backward()
 
                 # restore the model parameters to the one before first update
-                for old_param, new_param in zip(self.model.parameters(), temp_model):
-                    old_param.data = new_param.data.clone()
+                self._restore_params()
 
                 self.optimizer.step(beta=self.beta)
 

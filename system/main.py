@@ -424,6 +424,15 @@ if __name__ == "__main__":
                         help="Running times")
     parser.add_argument('-eg', "--eval_gap", type=int, default=1,
                         help="Rounds gap for evaluation")
+    parser.add_argument('-tbs', "--test_batch_size", type=int, default=8192,
+                        help="Batch size used for evaluation only. Metrics are "
+                             "batch-size independent, so this only affects speed.")
+    parser.add_argument('-svg', "--save_gap", type=int, default=1,
+                        help="Write a server checkpoint every this many rounds "
+                             "(the final round is always written).")
+    parser.add_argument('-plp', "--peravg_local_passes", type=int, default=2,
+                        help="Times client.train() runs per round in PerAvg. "
+                             "PFLlib upstream uses 2; 1 halves training time.")
     parser.add_argument('-sfn', "--save_folder_name", type=str, default='items')
     parser.add_argument('-ab', "--auto_break", type=bool, default=False)
     parser.add_argument('-dlg', "--dlg_eval", type=bool, default=False)
