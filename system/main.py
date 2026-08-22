@@ -430,9 +430,13 @@ if __name__ == "__main__":
     parser.add_argument('-svg', "--save_gap", type=int, default=1,
                         help="Write a server checkpoint every this many rounds "
                              "(the final round is always written).")
-    parser.add_argument('-plp', "--peravg_local_passes", type=int, default=2,
+    parser.add_argument('-plp', "--peravg_local_passes", type=int, default=1,
                         help="Times client.train() runs per round in PerAvg. "
-                             "PFLlib upstream uses 2; 1 halves training time.")
+                             "Per-FedAvg Alg. 1 does one local update loop, so 1. "
+                             "PFLlib upstream called it twice; pass 2 to reproduce that.")
+    parser.add_argument('-uagg', "--uniform_agg", action='store_true',
+                        help="Average client models uniformly, as Per-FedAvg Alg. 1 "
+                             "does, instead of weighting by sample count.")
     parser.add_argument('-sfn', "--save_folder_name", type=str, default='items')
     parser.add_argument('-ab', "--auto_break", type=bool, default=False)
     parser.add_argument('-dlg', "--dlg_eval", type=bool, default=False)
@@ -457,7 +461,9 @@ if __name__ == "__main__":
     parser.add_argument('-tth', "--time_threthold", type=float, default=10000,
                         help="The threthold for droping slow clients")
     # pFedMe / PerAvg / FedProx / FedAMP / FedPHP / GPFL / FedCAC
-    parser.add_argument('-bt', "--beta", type=float, default=0.0)
+    parser.add_argument('-bt', "--beta", type=float, default=0.0,
+                        help="PerAvg: meta step size (beta) for the second step. "
+                             "0 means reuse the local learning rate (alpha).")
     parser.add_argument('-lam', "--lamda", type=float, default=1.0,
                         help="Regularization weight")
     parser.add_argument('-mu', "--mu", type=float, default=0.0)

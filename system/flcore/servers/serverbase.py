@@ -132,8 +132,16 @@ class Server(object):
                 self.uploaded_ids.append(client.id)
                 self.uploaded_weights.append(client.train_samples)
                 self.uploaded_models.append(client.model)
-        for i, w in enumerate(self.uploaded_weights):
-            self.uploaded_weights[i] = w / tot_samples
+        if getattr(self.args, 'uniform_agg', False):
+            # Per-FedAvg Alg. 1 lay trung binh DEU tren cac client duoc chon:
+            # w = (1/|S|) * sum(w_i). PFLlib mac dinh theo kieu FedAvg, tuc la
+            # trong so theo so mau. Giu mac dinh cu de PerAvg/FedAvg/FedProx
+            # trong cung bo thi nghiem van so sanh duoc voi nhau.
+            n = len(self.uploaded_weights)
+            self.uploaded_weights = [1.0 / n] * n
+        else:
+            for i, w in enumerate(self.uploaded_weights):
+                self.uploaded_weights[i] = w / tot_samples
 
     def aggregate_parameters(self):
         assert (len(self.uploaded_models) > 0)

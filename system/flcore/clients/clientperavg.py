@@ -10,8 +10,12 @@ class clientPerAvg(Client):
     def __init__(self, args, id, train_samples, test_samples, **kwargs):
         super().__init__(args, id, train_samples, test_samples, **kwargs)
 
-        # self.beta = args.beta
-        self.beta = self.learning_rate
+        # Per-FedAvg (Fallah et al., 2020, Alg. 1) dung HAI hoc suat: alpha cho
+        # buoc thich nghi (step 1) va beta cho buoc meta (step 2). PFLlib upstream
+        # comment mat args.beta va ep beta = alpha, khien -bt hoan toan vo tac dung.
+        # Mac dinh -bt 0.0 van roi ve alpha, nen khong doi hanh vi cua cac lan
+        # chay truoc; truyen -bt <gia tri> moi kich hoat beta rieng.
+        self.beta = args.beta if getattr(args, 'beta', 0.0) > 0 else self.learning_rate
 
         self.optimizer = PerAvgOptimizer(self.model.parameters(), lr=self.learning_rate)
         self.learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
