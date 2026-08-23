@@ -28,21 +28,30 @@ def read_data(dataset, idx, is_train=True):
 
 _IOV_CACHE = {}
 _IOV_BASE_PATH = None
+_IOV_TASK = None            # None/0 = gop moi task; 1..5 = chi mot task
+_IOV_TEST_VIEW = None       # tap test da loc theo cac lop cua task dang chay
+_IOV_TRAIN_LABELS = set()   # cac nhan thuc su xuat hien trong du lieu train
 
 # Tried in order. Set the IOV_DATA_DIR environment variable to override.
 _IOV_PATH_CANDIDATES = [
+    "/kaggle/input/datasets/tongxuanvu/100clientiov",
     "/kaggle/input/datasets/tongxuanvu/ids-iov",
     "/kaggle/input/ids-iov",
-    "/kaggle/working/ids-iov",
     "D:/FL/data/iov",
     "C:/FederatedLearning/data/iov",
-    "C:/FederatedLearning/FL/core/data iov",
 ]
 
-# Stop caching *train* shards once the cache passes this many bytes, so a
-# session cannot be killed by running out of RAM. The test set is always
-# cached: it is the one that was being re-read 100 times per round.
 _IOV_CACHE_BUDGET = float(os.environ.get("IOV_CACHE_BUDGET_GB", "12")) * (1024 ** 3)
+
+
+def set_iov_task(task_id):
+    """Chon task cho bo IoV class-incremental. 0/None = gop toan bo task."""
+    global _IOV_TASK, _IOV_TEST_VIEW, _IOV_TRAIN_LABELS
+    _IOV_TASK = int(task_id) if task_id else None
+    _IOV_TEST_VIEW = None
+    _IOV_TRAIN_LABELS = set()
+    if _IOV_TASK:
+        print(f"[IoV] chi dung task {_IOV_TASK}", flush=True)
 
 
 def _tensor_bytes(t):
@@ -66,64 +75,132 @@ def iov_base_path():
             print(f"[IoV] data root: {path}", flush=True)
             return path
 
-    # Kaggle mounts datasets under an unpredictable slug; find it by content.
-    for root in sorted(glob.glob("/kaggle/input/*") + glob.glob("/kaggle/input/*/*")):
+    for root in sorted(glob.glob("/kaggle/input/*") + glob.glob("/kaggle/input/*/*")
+                       + glob.glob("/kaggle/input/*/*/*")):
         if os.path.isfile(os.path.join(root, "global_test_data.pt")):
             _IOV_BASE_PATH = root
             print(f"[IoV] data root (auto-detected): {root}", flush=True)
             return root
 
     raise FileNotFoundError(
-        "Khong tim thay thu muc du lieu IoV. Da thu:\n  "
-        + "\n  ".join(p for p in ([env] if env else []) + _IOV_PATH_CANDIDATES if p)
-        + "\nDat bien moi truong IOV_DATA_DIR tro toi thu muc chua "
-          "global_test_data.pt va federated_data/."
+        "Khong tim thay thu muc du lieu IoV. Dat bien moi truong IOV_DATA_DIR "
+        "tro toi thu muc chua global_test_data.pt va federated_data/."
     )
 
 
-def _load_iov(key, pt_path, cacheable=True):
-    """Return (x, y) for one IoV file, from cache when possible.
+def _client_files(idx):
+    """Cac file train cua client idx, theo layout thuc te cua dataset.
 
-    x is kept in its stored dtype when that dtype is float16 -- the cast to
-    float32 happens per batch in TensorBatches, which halves the resident
-    size of the 42M-row test set (2.6 GB instead of 5.2 GB).
+    Ho tro ca hai kieu dat ten:
+      federated_data/client_<idx>.pt              (khong chia task)
+      federated_data/client_<idx>_task_<t>.pt     (class-incremental)
     """
+    fed = os.path.join(iov_base_path(), "federated_data")
+    flat = os.path.join(fed, f"client_{idx}.pt")
+    if _IOV_TASK:
+        p = os.path.join(fed, f"client_{idx}_task_{_IOV_TASK}.pt")
+        return [p] if os.path.exists(p) else []
+    if os.path.exists(flat):
+        return [flat]
+    return sorted(glob.glob(os.path.join(fed, f"client_{idx}_task_*.pt")))
+
+
+def iov_clients_available(max_clients=1000):
+    """So client co du lieu voi task dang chon -- de bao loi cho ro."""
+    n = 0
+    for i in range(max_clients):
+        if _client_files(i):
+            n += 1
+        elif n:
+            break
+    return n
+
+
+def _read_pt(path):
+    try:
+        return torch.load(path, map_location="cpu")
+    except Exception:
+        return torch.load(path, map_location="cpu", weights_only=False)
+
+
+def _norm(x, y):
+    y = y.long()
+    if x.dtype not in (torch.float16, torch.float32):
+        x = x.float()
+    return x, y
+
+
+def _load_iov_train(idx):
+    key = ("train", _IOV_TASK, idx)
     hit = _IOV_CACHE.get(key)
     if hit is not None:
         return hit
 
-    try:
-        blob = torch.load(pt_path, map_location="cpu")
-    except Exception:
-        # torch >= 2.6 defaults to weights_only=True; older pickles need False.
-        blob = torch.load(pt_path, map_location="cpu", weights_only=False)
+    files = _client_files(idx)
+    if not files:
+        avail = iov_clients_available()
+        raise FileNotFoundError(
+            f"Client {idx} khong co du lieu train"
+            + (f" o task {_IOV_TASK}" if _IOV_TASK else "")
+            + f". Chi co {avail} client (id 0..{avail-1}) co du lieu -> dat -nc {avail}."
+        )
 
-    x = blob["x"]
-    y = blob["y"].long()
-    if x.dtype not in (torch.float16, torch.float32):
-        x = x.float()
+    xs, ys = [], []
+    for f in files:
+        blob = _read_pt(f)
+        x, y = _norm(blob["x"], blob["y"])
+        xs.append(x); ys.append(y)
+    x = xs[0] if len(xs) == 1 else torch.cat(xs)
+    y = ys[0] if len(ys) == 1 else torch.cat(ys)
 
-    if cacheable and _cache_bytes() + _tensor_bytes(x) + _tensor_bytes(y) <= _IOV_CACHE_BUDGET:
+    _IOV_TRAIN_LABELS.update(y.unique().tolist())
+
+    if _cache_bytes() + _tensor_bytes(x) + _tensor_bytes(y) <= _IOV_CACHE_BUDGET:
         _IOV_CACHE[key] = (x, y)
-        print(f"[IoV] cached {key}: {tuple(x.shape)} {x.dtype}, "
-              f"cache = {_cache_bytes() / 1024 ** 3:.2f} GB", flush=True)
-    elif cacheable:
-        print(f"[IoV] cache budget reached ({_IOV_CACHE_BUDGET / 1024 ** 3:.1f} GB); "
-              f"{key} will be re-read each time. Raise IOV_CACHE_BUDGET_GB if RAM allows.",
-              flush=True)
-
     return x, y
+
+
+def _load_iov_test_full():
+    hit = _IOV_CACHE.get(("test",))
+    if hit is not None:
+        return hit
+    blob = _read_pt(os.path.join(iov_base_path(), "global_test_data.pt"))
+    x, y = _norm(blob["x"], blob["y"])
+    _IOV_CACHE[("test",)] = (x, y)
+    print(f"[IoV] cached test: {tuple(x.shape)} {x.dtype}, "
+          f"cache = {_cache_bytes() / 1024 ** 3:.2f} GB", flush=True)
+    return x, y
+
+
+def iov_test_view():
+    """Tap test dung de danh gia.
+
+    Khi chay mot task cu the, mo hinh chi duoc hoc cac lop cua task do, nen
+    danh gia tren ca 13 lop se do mot thu mo hinh chua bao gio duoc day. O day
+    tap test duoc loc ve dung cac nhan CO MAT trong du lieu train da nap --
+    suy tu chinh du lieu, khong can file mapping. Goi lan dau sau khi toan bo
+    client da duoc tao, luc do _IOV_TRAIN_LABELS moi day du.
+    """
+    global _IOV_TEST_VIEW
+    if _IOV_TEST_VIEW is not None:
+        return _IOV_TEST_VIEW
+    x, y = _load_iov_test_full()
+    if _IOV_TASK and _IOV_TRAIN_LABELS:
+        keep = sorted(_IOV_TRAIN_LABELS)
+        mask = torch.isin(y, torch.tensor(keep, dtype=y.dtype))
+        x, y = x[mask], y[mask]
+        print(f"[IoV] danh gia tren {len(keep)} lop cua task {_IOV_TASK}: {keep}"
+              f" -> {x.shape[0]:,} dong test (tu {mask.numel():,})", flush=True)
+    _IOV_TEST_VIEW = (x, y)
+    return _IOV_TEST_VIEW
 
 
 def read_client_data(dataset, idx, is_train=True, few_shot=0):
     if dataset == "IoV":
-        base_path = iov_base_path()
         if is_train:
-            x, y = _load_iov(("train", idx), f"{base_path}/federated_data/client_{idx}.pt")
+            x, y = _load_iov_train(idx)
         else:
-            # Every client is evaluated on the same global test set, so it is
-            # cached under a single key rather than once per client.
-            x, y = _load_iov(("test",), f"{base_path}/global_test_data.pt")
+            x, y = _load_iov_test_full()
         return torch.utils.data.TensorDataset(x, y)
 
     data = read_data(dataset, idx, is_train)

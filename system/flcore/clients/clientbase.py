@@ -6,7 +6,7 @@ import os
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
-from utils.data_utils import read_client_data
+from utils.data_utils import read_client_data, iov_test_view
 from utils.fast_loader import TensorBatches
 
 
@@ -71,12 +71,14 @@ class Client(object):
     def load_test_data(self, batch_size=None):
         if batch_size == None:
             batch_size = self.test_batch_size
-        test_data = read_client_data(self.dataset, self.id, is_train=False, few_shot=self.few_shot)
         if self.dataset == "IoV":
+            # iov_test_view() loc tap test ve dung cac lop cua task dang chay.
             # No shuffle: the metrics are order-independent, and shuffling
             # would cost a 42M-element randperm per client per round.
-            return TensorBatches(x=test_data.tensors[0], y=test_data.tensors[1],
-                                 batch_size=batch_size, shuffle=False, drop_last=False)
+            x, y = iov_test_view()
+            return TensorBatches(x=x, y=y, batch_size=batch_size,
+                                 shuffle=False, drop_last=False)
+        test_data = read_client_data(self.dataset, self.id, is_train=False, few_shot=self.few_shot)
         return DataLoader(test_data, batch_size, drop_last=False, shuffle=True)
         
     def set_parameters(self, model):

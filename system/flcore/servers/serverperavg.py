@@ -119,9 +119,15 @@ class PerAvg(Server):
         micro_r = TP.sum() / (TP.sum() + FN.sum() + 1e-12)
         micro_f1 = 2 * micro_p * micro_r / (micro_p + micro_r + 1e-12)
         
-        macro_p = np.mean(TP / (TP + FP + 1e-12))
-        macro_r = np.mean(TP / (TP + FN + 1e-12))
-        macro_f1 = np.mean(2 * (TP / (TP + FP + 1e-12)) * (TP / (TP + FN + 1e-12)) / ((TP / (TP + FP + 1e-12)) + (TP / (TP + FN + 1e-12)) + 1e-12))
+        # Chi trung binh tren cac lop THUC SU co mat trong tap test. Neu khong,
+        # moi lop khong xuat hien deu dong gop F1 = 0 va keo macro-F1 xuong mot
+        # cach vo nghia (vi du: chay 1 task 3 lop nhung chia cho 13).
+        present = global_cm.sum(axis=1) > 0
+        _p = (TP / (TP + FP + 1e-12))[present]
+        _r = (TP / (TP + FN + 1e-12))[present]
+        macro_p = np.mean(_p)
+        macro_r = np.mean(_r)
+        macro_f1 = np.mean(2 * _p * _r / (_p + _r + 1e-12))
         
         weights = global_cm.sum(axis=1)
         total = weights.sum()
