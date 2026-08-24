@@ -65,7 +65,11 @@ class Client(object):
         train_data = read_client_data(self.dataset, self.id, is_train=True, few_shot=self.few_shot)
         if self.dataset == "IoV":
             x, y = train_data.tensors
-            return TensorBatches(x, y, batch_size, shuffle=True, drop_last=True)
+            # Shard few-shot (10-shot, 1%) co the it hon mot batch. drop_last=True
+            # khi do tra ve 0 batch va moi thu phia sau vo nghia, nen chi bo batch
+            # cuoi khi con it nhat mot batch day.
+            return TensorBatches(x, y, batch_size, shuffle=True,
+                                 drop_last=x.shape[0] >= batch_size)
         return DataLoader(train_data, batch_size, drop_last=True, shuffle=True)
 
     def load_test_data(self, batch_size=None):

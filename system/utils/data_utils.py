@@ -33,6 +33,9 @@ _IOV_TEST_VIEW = None       # tap test da loc theo cac lop cua task dang chay
 _IOV_TRAIN_LABELS = set()   # cac nhan thuc su xuat hien trong du lieu train
 _IOV_EVAL_CAP = 0           # tran so dong test moi lop; 0 = dung toan bo
 _IOV_EVAL_W = None          # trong so hoan nguyen cho tung lop sau khi lay mau
+_IOV_FED_DIR = "federated_data"   # full | _10shot | _fewshot (1%)
+_IOV_EVAL_CUM = False       # danh gia luy tien tren MOI lop da hoc tu task 1
+_IOV_TASK_SIZES = None      # so lop moi task, doc tu task_mapping.json
 
 # Tried in order. Set the IOV_DATA_DIR environment variable to override.
 _IOV_PATH_CANDIDATES = [
@@ -44,6 +47,45 @@ _IOV_PATH_CANDIDATES = [
 ]
 
 _IOV_CACHE_BUDGET = float(os.environ.get("IOV_CACHE_BUDGET_GB", "12")) * (1024 ** 3)
+
+
+def set_iov_fed_dir(name):
+    """Thu muc con chua shard train: federated_data (full),
+    federated_data_10shot, federated_data_fewshot (1%)."""
+    global _IOV_FED_DIR, _IOV_CACHE
+    if name and name != _IOV_FED_DIR:
+        _IOV_FED_DIR = name
+        _IOV_CACHE = {k: v for k, v in _IOV_CACHE.items() if k == ("test",)}
+        print(f"[IoV] thu muc du lieu train: {name}", flush=True)
+
+
+def _task_sizes():
+    """So lop moi task, uu tien doc task_mapping.json cua chinh dataset."""
+    global _IOV_TASK_SIZES
+    if _IOV_TASK_SIZES is None:
+        _IOV_TASK_SIZES = [3, 3, 3, 2, 2]
+        f = os.path.join(iov_base_path(), "task_mapping.json")
+        if os.path.exists(f):
+            try:
+                import json
+                with open(f, encoding='utf-8') as fh:
+                    m = json.load(fh)
+                if isinstance(m, list) and all(isinstance(t, list) for t in m):
+                    _IOV_TASK_SIZES = [len(t) for t in m]
+            except Exception as e:
+                print(f"[IoV] khong doc duoc task_mapping.json ({e}), dung [3,3,3,2,2]",
+                      flush=True)
+        print(f"[IoV] so lop moi task: {_IOV_TASK_SIZES}", flush=True)
+    return _IOV_TASK_SIZES
+
+
+def set_iov_eval_cumulative(flag):
+    """True = danh gia tren cac lop cua task 1..tid (quy uoc class-incremental,
+    de lo ra viec quen lop cu). False = chi cac lop cua task dang chay."""
+    global _IOV_EVAL_CUM, _IOV_TEST_VIEW, _IOV_EVAL_W
+    _IOV_EVAL_CUM = bool(flag)
+    _IOV_TEST_VIEW = None
+    _IOV_EVAL_W = None
 
 
 def set_iov_eval_cap(cap):
@@ -116,7 +158,7 @@ def _client_files(idx):
       federated_data/client_<idx>.pt              (khong chia task)
       federated_data/client_<idx>_task_<t>.pt     (class-incremental)
     """
-    fed = os.path.join(iov_base_path(), "federated_data")
+    fed = os.path.join(iov_base_path(), _IOV_FED_DIR)
     flat = os.path.join(fed, f"client_{idx}.pt")
     if _IOV_TASK:
         p = os.path.join(fed, f"client_{idx}_task_{_IOV_TASK}.pt")
@@ -206,12 +248,23 @@ def iov_test_view():
     if _IOV_TEST_VIEW is not None:
         return _IOV_TEST_VIEW
     x, y = _load_iov_test_full()
-    if _IOV_TASK and _IOV_TRAIN_LABELS:
-        keep = sorted(_IOV_TRAIN_LABELS)
-        mask = torch.isin(y, torch.tensor(keep, dtype=y.dtype))
-        x, y = x[mask], y[mask]
-        print(f"[IoV] danh gia tren {len(keep)} lop cua task {_IOV_TASK}: {keep}"
-              f" -> {x.shape[0]:,} dong test (tu {mask.numel():,})", flush=True)
+    if _IOV_TASK:
+        if _IOV_EVAL_CUM:
+            # Luy tien: moi lop cua task 1..tid. Nhan chay lien tuc tu 0 theo
+            # dung thu tu task, da doi chieu voi phan bo lop cua tap test.
+            cum = sum(_task_sizes()[:_IOV_TASK])
+            keep = list(range(cum))
+            what = f"luy tien task 1-{_IOV_TASK}"
+        elif _IOV_TRAIN_LABELS:
+            keep = sorted(_IOV_TRAIN_LABELS)
+            what = f"rieng task {_IOV_TASK}"
+        else:
+            keep = None
+        if keep:
+            mask = torch.isin(y, torch.tensor(keep, dtype=y.dtype))
+            x, y = x[mask], y[mask]
+            print(f"[IoV] danh gia {what}: {len(keep)} lop {keep}"
+                  f" -> {x.shape[0]:,} dong test (tu {mask.numel():,})", flush=True)
 
     if _IOV_EVAL_CAP:
         # Lay mau theo tung nhan, hat giong co dinh -> moi round dung DUNG mot

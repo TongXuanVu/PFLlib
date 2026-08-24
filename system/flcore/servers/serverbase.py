@@ -5,7 +5,8 @@ import h5py
 import copy
 import time
 import random
-from utils.data_utils import read_client_data, set_iov_task, set_iov_eval_cap
+from utils.data_utils import (read_client_data, set_iov_task, set_iov_eval_cap,
+                              set_iov_fed_dir, set_iov_eval_cumulative)
 from utils.dlg import DLG
 
 
@@ -13,7 +14,9 @@ class Server(object):
     def __init__(self, args, times):
         # Set up the main attributes
         self.args = args
+        set_iov_fed_dir(getattr(args, 'fed_dir', 'federated_data'))
         set_iov_task(getattr(args, 'task_id', 0))
+        set_iov_eval_cumulative(getattr(args, 'eval_cumulative', False))
         set_iov_eval_cap(getattr(args, 'eval_sample_cap', 0))
         self.device = args.device
         self.dataset = args.dataset
@@ -164,7 +167,10 @@ class Server(object):
         task chay noi tiep se ghi de len nhau: ten file chi co round nen
         PerAvg_server_round_5.pt cua task 2 bi task 3 xoa mat."""
         tid = getattr(self.args, 'task_id', 0)
-        name = f"{self.dataset}_task{tid}" if tid else self.dataset
+        fed = getattr(self.args, 'fed_dir', 'federated_data')
+        # kich ban: '' (full) | '_10shot' | '_fewshot'
+        scen = fed.replace('federated_data', '')
+        name = f"{self.dataset}{scen}_task{tid}" if tid else f"{self.dataset}{scen}"
         return os.path.join("models", name)
 
     def save_global_model(self, round_num=None):
@@ -176,6 +182,18 @@ class Server(object):
         else:
             model_path = os.path.join(model_path, self.algorithm + "_server" + ".pt")
         torch.save(self.global_model, model_path)
+
+    def load_init_checkpoint(self, path):
+        """Nap trong so khoi tao tu checkpoint cua task TRUOC do, nhung danh so
+        round lai tu dau. Day la cach noi cac task thanh mot mach
+        class-incremental: task 2 bat dau tu mo hinh cuoi cua task 1."""
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"--init_checkpoint khong ton tai: {path}")
+        try:
+            self.global_model = torch.load(path, weights_only=False)
+        except TypeError:
+            self.global_model = torch.load(path)
+        print(f"[init] bat dau tu checkpoint: {path}", flush=True)
 
     def load_model(self, round_num=None):
         model_path = self._model_dir()
@@ -280,7 +298,7 @@ class Server(object):
         print(f"Round {round_num} - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}, Micro F1: {micro_f1:.4f}, Macro F1: {macro_f1:.4f}, Weighted F1: {weighted_f1:.4f}")
         
         import pandas as pd
-        csv_file = f"../results/{self.dataset}_{self.algorithm}_metrics.csv"
+        csv_file = f"../results/{self.dataset}_{self.algorithm}_{self.goal}_metrics.csv"
         os.makedirs(os.path.dirname(csv_file), exist_ok=True)
         if not os.path.exists(csv_file):
             df = pd.DataFrame(columns=['Round', 'Loss', 'Accuracy', 'Micro_P', 'Micro_R', 'Micro_F1', 'Macro_P', 'Macro_R', 'Macro_F1', 'Weighted_P', 'Weighted_R', 'Weighted_F1'])

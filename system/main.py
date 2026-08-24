@@ -427,6 +427,17 @@ if __name__ == "__main__":
     parser.add_argument('-tid', "--task_id", type=int, default=0,
                         help="IoV class-incremental: which task to train on "
                              "(1..5). 0 merges every task into one run.")
+    parser.add_argument('-fed', "--fed_dir", type=str, default="federated_data",
+                        help="IoV subfolder holding the client shards: "
+                             "federated_data (full), federated_data_10shot, "
+                             "federated_data_fewshot (1%%).")
+    parser.add_argument('-init', "--init_checkpoint", type=str, default=None,
+                        help="Start from this checkpoint but renumber rounds from 0. "
+                             "Use it to chain task N onto task N-1's final model.")
+    parser.add_argument('-ecum', "--eval_cumulative", action='store_true',
+                        help="Evaluate on every class from tasks 1..tid, the "
+                             "class-incremental convention, instead of only the "
+                             "current task's classes.")
     parser.add_argument('-esc', "--eval_sample_cap", type=int, default=0,
                         help="Cap each class in the test set at this many rows and "
                              "reweight the confusion matrix, so metrics estimate the "

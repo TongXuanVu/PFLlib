@@ -41,6 +41,13 @@ class PerAvg(Server):
             self.evaluate_one_step(round_num=start_round)
             return
 
+        init = getattr(self.args, 'init_checkpoint', None)
+        if init and self.args.mode == 'train':
+            self.load_init_checkpoint(init)
+        elif getattr(self.args, 'task_id', 0) > 1 and not init:
+            print("[canh bao] task > 1 nhung khong co --init_checkpoint: chay tu "
+                  "mo hinh ngau nhien, KHONG phai class-incremental.", flush=True)
+
         for i in range(start_round, self.global_rounds+1):
             s_t = time.time()
             self.selected_clients = self.select_clients()
@@ -147,7 +154,7 @@ class PerAvg(Server):
 
         print(f"Round {round_num} - Loss: {test_loss:.4f}, Acc: {test_acc:.4f}, Micro F1: {micro_f1:.4f}, Macro F1: {macro_f1:.4f}, Weighted F1: {weighted_f1:.4f}")
         
-        csv_file = f"../results/{self.dataset}_{self.algorithm}_metrics.csv"
+        csv_file = f"../results/{self.dataset}_{self.algorithm}_{self.goal}_metrics.csv"
         os.makedirs(os.path.dirname(csv_file), exist_ok=True)
         if not os.path.exists(csv_file):
             df = pd.DataFrame(columns=['Round', 'Loss', 'Accuracy', 'Micro_P', 'Micro_R', 'Micro_F1', 'Macro_P', 'Macro_R', 'Macro_F1', 'Weighted_P', 'Weighted_R', 'Weighted_F1'])

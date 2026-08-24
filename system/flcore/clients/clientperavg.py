@@ -51,6 +51,14 @@ class clientPerAvg(Client):
 
         for epoch in range(max_local_epochs):  # local update
             for X, Y in trainloader:
+                # Batch duoc nap voi co 2*batch_size roi xe doi: nua dau cho buoc
+                # thich nghi, nua sau cho buoc meta. Batch cuoi (hoac shard
+                # few-shot) co the ngan hon, nen cat theo do dai thuc te.
+                # BatchNorm can it nhat 2 mau moi nua.
+                half = min(self.batch_size, (X[0].shape[0] if type(X) == type([])
+                                             else X.shape[0]) // 2)
+                if half < 2:
+                    continue
                 # Was: temp_model = copy.deepcopy(list(self.model.parameters()))
                 # A full model copy allocated once per batch. Copying into a
                 # preallocated buffer gives the same values with no allocation.
@@ -59,11 +67,11 @@ class clientPerAvg(Client):
                 # step 1
                 if type(X) == type([]):
                     x = [None, None]
-                    x[0] = X[0][:self.batch_size].to(self.device)
-                    x[1] = X[1][:self.batch_size]
+                    x[0] = X[0][:half].to(self.device)
+                    x[1] = X[1][:half]
                 else:
-                    x = X[:self.batch_size].to(self.device)
-                y = Y[:self.batch_size].to(self.device)
+                    x = X[:half].to(self.device)
+                y = Y[:half].to(self.device)
                 if self.train_slow:
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 output = self.model(x)
@@ -75,11 +83,11 @@ class clientPerAvg(Client):
                 # step 2
                 if type(X) == type([]):
                     x = [None, None]
-                    x[0] = X[0][self.batch_size:].to(self.device)
-                    x[1] = X[1][self.batch_size:]
+                    x[0] = X[0][half:2 * half].to(self.device)
+                    x[1] = X[1][half:2 * half]
                 else:
-                    x = X[self.batch_size:].to(self.device)
-                y = Y[self.batch_size:].to(self.device)
+                    x = X[half:2 * half].to(self.device)
+                y = Y[half:2 * half].to(self.device)
                 if self.train_slow:
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 self.optimizer.zero_grad()
@@ -107,7 +115,13 @@ class clientPerAvg(Client):
         # self.model.to(self.device)
         self.model.train()
 
-        (x, y) = next(iter_loader)
+        try:
+            (x, y) = next(iter_loader)
+        except StopIteration:
+            # Shard rong hoac ngan hon mot batch: khong co gi de cap nhat.
+            return
+        if (x[0].shape[0] if type(x) == type([]) else x.shape[0]) < 2:
+            return          # BatchNorm can it nhat 2 mau
         if type(x) == type([]):
             x[0] = x[0].to(self.device)
         else:
