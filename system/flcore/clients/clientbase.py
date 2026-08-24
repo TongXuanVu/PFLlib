@@ -6,7 +6,7 @@ import os
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
-from utils.data_utils import read_client_data, iov_test_view
+from utils.data_utils import read_client_data, iov_test_view, iov_eval_weights
 from utils.fast_loader import TensorBatches
 
 
@@ -104,12 +104,16 @@ class Client(object):
         # after the loop. The previous version called .item() twice and
         # sklearn.metrics.confusion_matrix once per batch: three CPU/GPU
         # synchronisations and a host round-trip of every prediction, per batch.
-        acc_t = torch.zeros((), dtype=torch.long, device=self.device)
+        # Khi tap test da bi lay mau, moi dong dai dien cho w[y] dong that.
+        ew = iov_eval_weights() if self.dataset == "IoV" else None
+        ew = ew.to(self.device) if ew is not None else None
+
+        acc_t = torch.zeros((), dtype=torch.float64, device=self.device)
         loss_t = torch.zeros((), dtype=torch.float64, device=self.device)
+        num_t = torch.zeros((), dtype=torch.float64, device=self.device)
         # Flat (C*C + 1) histogram; index = true * C + pred. The extra last
         # bucket collects labels outside [0, C), which sklearn silently drops.
-        cm_flat = torch.zeros(C * C + 1, dtype=torch.long, device=self.device)
-        test_num = 0
+        cm_flat = torch.zeros(C * C + 1, dtype=torch.float64, device=self.device)
 
         with torch.no_grad():
             for x, y in testloaderfull:
@@ -120,12 +124,14 @@ class Client(object):
                 y = y.to(self.device)
                 output = self.model(x)
 
-                loss = self.loss(output, y)
-                loss_t += loss.double() * y.shape[0]
+                w = torch.ones_like(y, dtype=torch.float64) if ew is None else ew[y]
+
+                per = torch.nn.functional.cross_entropy(output, y, reduction='none')
+                loss_t += (per.double() * w).sum()
 
                 preds = torch.argmax(output, dim=1)
-                acc_t += (preds == y).sum()
-                test_num += y.shape[0]
+                acc_t += ((preds == y).double() * w).sum()
+                num_t += w.sum()
 
                 # Same layout as
                 #   sklearn.metrics.confusion_matrix(y, preds, labels=arange(C))
@@ -133,9 +139,10 @@ class Client(object):
                 in_range = (y >= 0) & (y < C)
                 idx = torch.where(in_range, y * C + preds,
                                   torch.full_like(y, C * C))
-                cm_flat += torch.bincount(idx, minlength=C * C + 1)
+                cm_flat += torch.bincount(idx, weights=w, minlength=C * C + 1)
 
-        test_acc = int(acc_t.item())
+        test_acc = float(acc_t.item())
+        test_num = float(num_t.item())
         test_loss = float(loss_t.item())
         confusion_matrix = cm_flat[:C * C].reshape(C, C).cpu().numpy()
 

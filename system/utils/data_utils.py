@@ -31,6 +31,8 @@ _IOV_BASE_PATH = None
 _IOV_TASK = None            # None/0 = gop moi task; 1..5 = chi mot task
 _IOV_TEST_VIEW = None       # tap test da loc theo cac lop cua task dang chay
 _IOV_TRAIN_LABELS = set()   # cac nhan thuc su xuat hien trong du lieu train
+_IOV_EVAL_CAP = 0           # tran so dong test moi lop; 0 = dung toan bo
+_IOV_EVAL_W = None          # trong so hoan nguyen cho tung lop sau khi lay mau
 
 # Tried in order. Set the IOV_DATA_DIR environment variable to override.
 _IOV_PATH_CANDIDATES = [
@@ -44,11 +46,30 @@ _IOV_PATH_CANDIDATES = [
 _IOV_CACHE_BUDGET = float(os.environ.get("IOV_CACHE_BUDGET_GB", "12")) * (1024 ** 3)
 
 
+def set_iov_eval_cap(cap):
+    """Tran so dong test giu lai cho MOI lop. 0 = khong lay mau."""
+    global _IOV_EVAL_CAP, _IOV_TEST_VIEW, _IOV_EVAL_W
+    _IOV_EVAL_CAP = max(0, int(cap or 0))
+    _IOV_TEST_VIEW = None
+    _IOV_EVAL_W = None
+
+
+def iov_eval_weights():
+    """Trong so mot dong test da lay mau dai dien cho bao nhieu dong that.
+
+    Lay mau THEO NHAN, nen moi hang cua confusion matrix duoc nhan lai dung mot
+    he so -> uoc luong khong chech cua confusion matrix day du. Lop it hon tran
+    duoc giu nguyen (he so 1), chi lop da so bi cat.
+    """
+    return _IOV_EVAL_W
+
+
 def set_iov_task(task_id):
     """Chon task cho bo IoV class-incremental. 0/None = gop toan bo task."""
-    global _IOV_TASK, _IOV_TEST_VIEW, _IOV_TRAIN_LABELS
+    global _IOV_TASK, _IOV_TEST_VIEW, _IOV_TRAIN_LABELS, _IOV_EVAL_W
     _IOV_TASK = int(task_id) if task_id else None
     _IOV_TEST_VIEW = None
+    _IOV_EVAL_W = None
     _IOV_TRAIN_LABELS = set()
     if _IOV_TASK:
         print(f"[IoV] chi dung task {_IOV_TASK}", flush=True)
@@ -181,7 +202,7 @@ def iov_test_view():
     suy tu chinh du lieu, khong can file mapping. Goi lan dau sau khi toan bo
     client da duoc tao, luc do _IOV_TRAIN_LABELS moi day du.
     """
-    global _IOV_TEST_VIEW
+    global _IOV_TEST_VIEW, _IOV_EVAL_W
     if _IOV_TEST_VIEW is not None:
         return _IOV_TEST_VIEW
     x, y = _load_iov_test_full()
@@ -191,6 +212,33 @@ def iov_test_view():
         x, y = x[mask], y[mask]
         print(f"[IoV] danh gia tren {len(keep)} lop cua task {_IOV_TASK}: {keep}"
               f" -> {x.shape[0]:,} dong test (tu {mask.numel():,})", flush=True)
+
+    if _IOV_EVAL_CAP:
+        # Lay mau theo tung nhan, hat giong co dinh -> moi round dung DUNG mot
+        # tap con, nen duong cong qua cac round van so sanh duoc voi nhau.
+        g = torch.Generator().manual_seed(12345)
+        n_cls = int(y.max().item()) + 1
+        w = torch.ones(n_cls, dtype=torch.float64)
+        idx_keep = []
+        for c in range(n_cls):
+            idx_c = (y == c).nonzero(as_tuple=True)[0]
+            n = idx_c.numel()
+            if n == 0:
+                continue
+            if n > _IOV_EVAL_CAP:
+                pick = torch.randperm(n, generator=g)[:_IOV_EVAL_CAP]
+                idx_c = idx_c[pick]
+                w[c] = n / float(_IOV_EVAL_CAP)
+            idx_keep.append(idx_c)
+        sel = torch.cat(idx_keep).sort().values
+        before = y.shape[0]
+        x, y = x[sel], y[sel]
+        _IOV_EVAL_W = w
+        capped = [(c, float(w[c])) for c in range(n_cls) if w[c] > 1]
+        print(f"[IoV] lay mau tap test: {before:,} -> {y.shape[0]:,} dong "
+              f"(tran {_IOV_EVAL_CAP:,}/lop). He so hoan nguyen: "
+              f"{ {c: round(f,1) for c, f in capped} }", flush=True)
+
     _IOV_TEST_VIEW = (x, y)
     return _IOV_TEST_VIEW
 

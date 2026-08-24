@@ -5,7 +5,7 @@ import h5py
 import copy
 import time
 import random
-from utils.data_utils import read_client_data, set_iov_task
+from utils.data_utils import read_client_data, set_iov_task, set_iov_eval_cap
 from utils.dlg import DLG
 
 
@@ -14,6 +14,7 @@ class Server(object):
         # Set up the main attributes
         self.args = args
         set_iov_task(getattr(args, 'task_id', 0))
+        set_iov_eval_cap(getattr(args, 'eval_sample_cap', 0))
         self.device = args.device
         self.dataset = args.dataset
         self.num_classes = args.num_classes

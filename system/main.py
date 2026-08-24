@@ -427,6 +427,10 @@ if __name__ == "__main__":
     parser.add_argument('-tid', "--task_id", type=int, default=0,
                         help="IoV class-incremental: which task to train on "
                              "(1..5). 0 merges every task into one run.")
+    parser.add_argument('-esc', "--eval_sample_cap", type=int, default=0,
+                        help="Cap each class in the test set at this many rows and "
+                             "reweight the confusion matrix, so metrics estimate the "
+                             "full-test values at a fraction of the cost. 0 = off.")
     parser.add_argument('-tbs', "--test_batch_size", type=int, default=8192,
                         help="Batch size used for evaluation only. Metrics are "
                              "batch-size independent, so this only affects speed.")
