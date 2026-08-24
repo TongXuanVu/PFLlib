@@ -159,8 +159,16 @@ class Server(object):
         for server_param, client_param in zip(self.global_model.parameters(), client_model.parameters()):
             server_param.data += client_param.data.clone() * w
 
+    def _model_dir(self):
+        """Thu muc checkpoint. Co -tid thi tach rieng theo task, neu khong bon
+        task chay noi tiep se ghi de len nhau: ten file chi co round nen
+        PerAvg_server_round_5.pt cua task 2 bi task 3 xoa mat."""
+        tid = getattr(self.args, 'task_id', 0)
+        name = f"{self.dataset}_task{tid}" if tid else self.dataset
+        return os.path.join("models", name)
+
     def save_global_model(self, round_num=None):
-        model_path = os.path.join("models", self.dataset)
+        model_path = self._model_dir()
         if not os.path.exists(model_path):
             os.makedirs(model_path)
         if round_num is not None:
@@ -170,7 +178,7 @@ class Server(object):
         torch.save(self.global_model, model_path)
 
     def load_model(self, round_num=None):
-        model_path = os.path.join("models", self.dataset)
+        model_path = self._model_dir()
         if round_num is not None:
             model_path = os.path.join(model_path, f"{self.algorithm}_server_round_{round_num}.pt")
         else:
@@ -185,7 +193,7 @@ class Server(object):
             self.global_model = torch.load(model_path)
 
     def model_exists(self):
-        model_path = os.path.join("models", self.dataset)
+        model_path = self._model_dir()
         model_path = os.path.join(model_path, self.algorithm + "_server" + ".pt")
         return os.path.exists(model_path)
         
