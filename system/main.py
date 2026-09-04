@@ -427,9 +427,16 @@ if __name__ == "__main__":
     parser.add_argument('-tid', "--task_id", type=int, default=0,
                         help="IoV class-incremental: which task to train on "
                              "(1..5). 0 merges every task into one run.")
-    parser.add_argument('-fed', "--fed_dir", type=str, default="federated_data",
-                        help="IoV subfolder holding the client shards: "
-                             "federated_data (full), federated_data_10shot, "
+    parser.add_argument('-dv', "--data_variant", type=str, default="can_iov",
+                        choices=["can_iov", "cic_iot23"],
+                        help="Bo du lieu: can_iov = 13 lop / 5 task, nhan tuan tu "
+                             "san, shard trong federated_data/. cic_iot23 = 34 lop / "
+                             "6 task, nhan giu ID GOC phi tuan tu nen PHAI remap qua "
+                             "task_mapping_label_ids.json, shard nam thang o root.")
+    parser.add_argument('-fed', "--fed_dir", type=str, default=None,
+                        help="Thu muc con chua shard client. De trong = mac dinh cua "
+                             "bo (can_iov: federated_data, cic_iot23: layout phang). "
+                             "Cac gia tri khac: federated_data_10shot, "
                              "federated_data_fewshot (1%%).")
     parser.add_argument('-init', "--init_checkpoint", type=str, default=None,
                         help="Start from this checkpoint but renumber rounds from 0. "
