@@ -370,6 +370,11 @@ def _load_iov_train(idx):
     files = _client_files(idx)
     if not files:
         avail = iov_clients_available()
+        if BO_HIEN_TAI == "cic_iot23":
+            print(f"[DATA] Client {idx} khong co du lieu cho task {_IOV_TASK}, tra ve tap rong.")
+            x = torch.empty((0, 1), dtype=torch.float32)
+            y = torch.empty((0,), dtype=torch.long)
+            return x, y
         raise FileNotFoundError(
             f"Client {idx} khong co du lieu train"
             + (f" o task {_IOV_TASK}" if _IOV_TASK else "")
