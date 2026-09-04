@@ -24,7 +24,10 @@ class Server(object):
             raise SystemExit(
                 f"[main] -ncl {args.num_classes} khong khop bo '{_bo}' "
                 f"(can {_n}). Dung lai de tranh chay sai am tham.")
-        set_iov_fed_dir(getattr(args, 'fed_dir', None) or CAU_HINH_BO[_bo]['fed_dir'])
+        # Ghi NGUOC gia tri da giai quyet vao args: _model_dir() va cac cho khac
+        # doc thang args.fed_dir, de None se no o `fed.replace(...)`.
+        args.fed_dir = getattr(args, 'fed_dir', None) or CAU_HINH_BO[_bo]['fed_dir']
+        set_iov_fed_dir(args.fed_dir)
         set_iov_task(getattr(args, 'task_id', 0))
         set_iov_eval_cumulative(getattr(args, 'eval_cumulative', False))
         set_iov_eval_cap(getattr(args, 'eval_sample_cap', 0))
@@ -177,9 +180,11 @@ class Server(object):
         task chay noi tiep se ghi de len nhau: ten file chi co round nen
         PerAvg_server_round_5.pt cua task 2 bi task 3 xoa mat."""
         tid = getattr(self.args, 'task_id', 0)
-        fed = getattr(self.args, 'fed_dir', 'federated_data')
+        fed = getattr(self.args, 'fed_dir', None) or 'federated_data'
         # kich ban: '' (full) | '_10shot' | '_fewshot'
-        scen = fed.replace('federated_data', '')
+        # Bo IoT dung layout phang nen fed_dir = '.', cung la kich ban full ->
+        # quy ve '' de khong sinh thu muc ten kieu 'IoT._task1'.
+        scen = '' if fed in ('.', '') else fed.replace('federated_data', '')
         name = f"{self.dataset}{scen}_task{tid}" if tid else f"{self.dataset}{scen}"
         return os.path.join("models", name)
 
