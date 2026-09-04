@@ -63,7 +63,7 @@ class Client(object):
         if batch_size == None:
             batch_size = self.batch_size
         train_data = read_client_data(self.dataset, self.id, is_train=True, few_shot=self.few_shot)
-        if self.dataset == "IoV":
+        if self.dataset in ("IoV", "IoT"):
             x, y = train_data.tensors
             # Shard few-shot (10-shot, 1%) co the it hon mot batch. drop_last=True
             # khi do tra ve 0 batch va moi thu phia sau vo nghia, nen chi bo batch
@@ -75,7 +75,7 @@ class Client(object):
     def load_test_data(self, batch_size=None):
         if batch_size == None:
             batch_size = self.test_batch_size
-        if self.dataset == "IoV":
+        if self.dataset in ("IoV", "IoT"):
             # iov_test_view() loc tap test ve dung cac lop cua task dang chay.
             # No shuffle: the metrics are order-independent, and shuffling
             # would cost a 42M-element randperm per client per round.
@@ -109,7 +109,7 @@ class Client(object):
         # sklearn.metrics.confusion_matrix once per batch: three CPU/GPU
         # synchronisations and a host round-trip of every prediction, per batch.
         # Khi tap test da bi lay mau, moi dong dai dien cho w[y] dong that.
-        ew = iov_eval_weights() if self.dataset == "IoV" else None
+        ew = iov_eval_weights() if self.dataset in ("IoV", "IoT") else None
         ew = ew.to(self.device) if ew is not None else None
 
         acc_t = torch.zeros((), dtype=torch.float64, device=self.device)
