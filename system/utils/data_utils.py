@@ -48,6 +48,132 @@ _IOV_PATH_CANDIDATES = [
 
 _IOV_CACHE_BUDGET = float(os.environ.get("IOV_CACHE_BUDGET_GB", "12")) * (1024 ** 3)
 
+# ---------------------------------------------------------------------------
+# Bo du lieu dang chay. Ten ham/bien van giu tien to _IOV_ vi ca file nay va
+# main.py/serverbase.py deu dung ten do; doi het se cham vao qua nhieu cho.
+#
+# Khac biet then chot giua hai bo:
+#   can_iov    nhan da TUAN TU 0..12 theo dung thu tu task  -> khong remap
+#   cic_iot23  nhan giu ID GOC, thu tu task phi tuan tu     -> PHAI remap
+#              (task 1 = [1,0,11,12,27,26], task 2 = [2,14,25,...] ...)
+# Cho danh gia luy tien (`iov_test_view`) gia dinh nhan chay lien tuc tu 0
+# theo thu tu task. Voi IoT ma khong remap thi gia dinh do sai va tap test bi
+# loc nham lop, khong bao loi gi.
+# ---------------------------------------------------------------------------
+CAU_HINH_BO = {
+    "can_iov": {
+        "num_classes": 13,
+        "fed_dir": "federated_data",     # shard nam trong thu muc con
+        "remap_nhan": False,
+        "file_task": "task_mapping.json",
+        "task_sizes_fallback": [3, 3, 3, 2, 2],
+        "paths": [
+            "/kaggle/input/datasets/tongxuanvu/100clientiov",
+            "/kaggle/input/datasets/tongxuanvu/ids-iov",
+            "/kaggle/input/ids-iov",
+            "D:/FL/data/iov",
+            "C:/FederatedLearning/data/iov",
+        ],
+    },
+    "cic_iot23": {
+        "num_classes": 34,
+        "fed_dir": ".",                  # layout PHANG: shard nam thang o root
+        "remap_nhan": True,
+        "file_task": "task_mapping_label_ids.json",
+        "task_sizes_fallback": [6, 6, 6, 6, 5, 5],
+        "paths": [
+            "/kaggle/input/datasets/tongxuanvu/iot100client/100client",
+            "/kaggle/input/iot100client/100client",
+            "D:/FL/core/data_split/100 client",
+            "C:/FederatedLearning/FL/core/data_split/100 client",
+        ],
+    },
+}
+BO_HIEN_TAI = "can_iov"     # mac dinh, giu tuong thich nguoc
+_LABEL_LUT = None
+_LABEL_LUT_READY = False
+
+
+def set_dataset(ten):
+    """Chon bo du lieu. Goi TRUOC moi thao tac doc du lieu."""
+    global BO_HIEN_TAI, _IOV_PATH_CANDIDATES, _IOV_FED_DIR, _IOV_TASK_SIZES
+    global _IOV_CACHE, _IOV_BASE_PATH, _IOV_TEST_VIEW, _IOV_EVAL_W
+    global _IOV_TRAIN_LABELS, _LABEL_LUT, _LABEL_LUT_READY
+    if ten not in CAU_HINH_BO:
+        raise SystemExit(f"[DATA] Bo khong ho tro: {ten}. Chi co: {list(CAU_HINH_BO)}")
+    cfg = CAU_HINH_BO[ten]
+    BO_HIEN_TAI = ten
+    _IOV_PATH_CANDIDATES = list(cfg["paths"])
+    _IOV_FED_DIR = cfg["fed_dir"]
+    # xoa het trang thai cua bo cu
+    _IOV_TASK_SIZES = None
+    _IOV_CACHE = {}
+    _IOV_BASE_PATH = None
+    _IOV_TEST_VIEW = None
+    _IOV_EVAL_W = None
+    _IOV_TRAIN_LABELS = set()
+    _LABEL_LUT, _LABEL_LUT_READY = None, False
+    print(f"[DATA] set_dataset({ten}): {cfg['num_classes']} lop | "
+          f"thu muc shard '{cfg['fed_dir']}' | "
+          f"remap nhan: {'CO' if cfg['remap_nhan'] else 'KHONG'}", flush=True)
+
+
+def _find_file_in_candidates(filename):
+    env = os.environ.get("IOV_DATA_DIR")
+    candidates = []
+    if env: candidates.append(env)
+    candidates.extend(_IOV_PATH_CANDIDATES)
+    candidates.extend([
+        "/kaggle/input/datasets/tongxuanvu/iot100client/100client",
+        "/kaggle/input/datasets/tongxuanvu/iot100client/iot100client_fewshot",
+        "/kaggle/input/iot100client/100client",
+        "/kaggle/input/iot100client/iot100client_fewshot",
+        iov_base_path()
+    ])
+    for base in candidates:
+        if base and os.path.isdir(base):
+            p = os.path.join(base, filename)
+            if os.path.exists(p):
+                return p
+    return os.path.join(iov_base_path(), filename)
+
+def _get_label_lut():
+    """Bang tra nhan GOC -> nhan tuan tu theo thu tu task. None neu khong remap.
+
+    Doc tu file_task cua bo (danh sach cac task, moi task la danh sach ID goc).
+    """
+    global _LABEL_LUT, _LABEL_LUT_READY
+    if _LABEL_LUT_READY:
+        return _LABEL_LUT
+    _LABEL_LUT_READY = True
+
+    cfg = CAU_HINH_BO[BO_HIEN_TAI]
+    if not cfg["remap_nhan"]:
+        print(f"[DATA] Bo '{BO_HIEN_TAI}' co nhan tuan tu san -> KHONG remap.",
+              flush=True)
+        return None
+
+    import json
+    f = _find_file_in_candidates(cfg["file_task"])
+    if not os.path.exists(f):
+        raise SystemExit(
+            f"[DATA] Bo '{BO_HIEN_TAI}' can remap nhan nhung khong thay "
+            f"{cfg['file_task']}.\n"
+            f"  Nhan cua bo nay giu ID GOC phi tuan tu; thieu bang nay thi\n"
+            f"  viec loc lop theo task se sai am tham.")
+    with open(f, encoding="utf-8") as fh:
+        task_orders = json.load(fh)
+    flat = [int(c) for task in task_orders for c in task]
+    if sorted(flat) != list(range(len(flat))):
+        raise SystemExit(f"[DATA] {f} khong phu kin 0..{len(flat)-1}, khong dung remap duoc.")
+    lut = torch.full((max(flat) + 1,), -1, dtype=torch.long)
+    for seq_id, orig_id in enumerate(flat):
+        lut[orig_id] = seq_id
+    _LABEL_LUT = lut
+    print(f"[DATA] Remap nhan goc -> tuan tu theo {cfg['file_task']}: "
+          f"{len(flat)} lop, thu tu task {task_orders}", flush=True)
+    return _LABEL_LUT
+
 
 def set_iov_fed_dir(name):
     """Thu muc con chua shard train: federated_data (full),
@@ -63,8 +189,12 @@ def _task_sizes():
     """So lop moi task, uu tien doc task_mapping.json cua chinh dataset."""
     global _IOV_TASK_SIZES
     if _IOV_TASK_SIZES is None:
-        _IOV_TASK_SIZES = [3, 3, 3, 2, 2]
-        f = os.path.join(iov_base_path(), "task_mapping.json")
+        cfg = CAU_HINH_BO[BO_HIEN_TAI]
+        _IOV_TASK_SIZES = list(cfg["task_sizes_fallback"])
+        # Ten file khac nhau giua hai bo: can_iov dung task_mapping.json,
+        # cic_iot23 dung task_mapping_label_ids.json. Ca hai deu la danh sach
+        # cac task nen [len(t) for t in m] cho ra so lop moi task.
+        f = _find_file_in_candidates(cfg["file_task"])
         if os.path.exists(f):
             try:
                 import json
@@ -73,9 +203,16 @@ def _task_sizes():
                 if isinstance(m, list) and all(isinstance(t, list) for t in m):
                     _IOV_TASK_SIZES = [len(t) for t in m]
             except Exception as e:
-                print(f"[IoV] khong doc duoc task_mapping.json ({e}), dung [3,3,3,2,2]",
-                      flush=True)
-        print(f"[IoV] so lop moi task: {_IOV_TASK_SIZES}", flush=True)
+                print(f"[DATA] khong doc duoc {cfg['file_task']} ({e}), "
+                      f"dung {_IOV_TASK_SIZES}", flush=True)
+        else:
+            print(f"[DATA] khong thay {cfg['file_task']}, dung {_IOV_TASK_SIZES}",
+                  flush=True)
+        n = sum(_IOV_TASK_SIZES)
+        if n != cfg["num_classes"]:
+            raise SystemExit(f"[DATA] So lop moi task {_IOV_TASK_SIZES} cong lai = {n}, "
+                             f"khong khop {cfg['num_classes']} lop cua bo '{BO_HIEN_TAI}'.")
+        print(f"[DATA] so lop moi task: {_IOV_TASK_SIZES}", flush=True)
     return _IOV_TASK_SIZES
 
 
@@ -158,14 +295,34 @@ def _client_files(idx):
       federated_data/client_<idx>.pt              (khong chia task)
       federated_data/client_<idx>_task_<t>.pt     (class-incremental)
     """
-    fed = os.path.join(iov_base_path(), _IOV_FED_DIR)
-    flat = os.path.join(fed, f"client_{idx}.pt")
-    if _IOV_TASK:
-        p = os.path.join(fed, f"client_{idx}_task_{_IOV_TASK}.pt")
-        return [p] if os.path.exists(p) else []
-    if os.path.exists(flat):
-        return [flat]
-    return sorted(glob.glob(os.path.join(fed, f"client_{idx}_task_*.pt")))
+    env = os.environ.get("IOV_DATA_DIR")
+    candidates = []
+    if env: candidates.append(env)
+    candidates.extend(_IOV_PATH_CANDIDATES)
+    candidates.extend([
+        "/kaggle/input/datasets/tongxuanvu/iot100client/100client",
+        "/kaggle/input/datasets/tongxuanvu/iot100client/iot100client_fewshot",
+        "/kaggle/input/iot100client/100client",
+        "/kaggle/input/iot100client/iot100client_fewshot",
+        iov_base_path()
+    ])
+    
+    for base in candidates:
+        if not (base and os.path.isdir(base)):
+            continue
+        fed = os.path.join(base, _IOV_FED_DIR)
+        flat = os.path.join(fed, f"client_{idx}.pt")
+        if _IOV_TASK:
+            p = os.path.join(fed, f"client_{idx}_task_{_IOV_TASK}.pt")
+            if os.path.exists(p):
+                return [p]
+        else:
+            if os.path.exists(flat):
+                return [flat]
+            files = sorted(glob.glob(os.path.join(fed, f"client_{idx}_task_*.pt")))
+            if files:
+                return files
+    return []
 
 
 def iov_clients_available(max_clients=1000):
@@ -190,6 +347,18 @@ def _norm(x, y):
     y = y.long()
     if x.dtype not in (torch.float16, torch.float32):
         x = x.float()
+    # Diem nghen duy nhat ma CA train lan test deu di qua -> cam remap o day
+    # de khong sot duong nao. No-op voi bo co nhan tuan tu san (can_iov).
+    lut = _get_label_lut()
+    if lut is not None:
+        if int(y.max()) >= lut.numel():
+            raise SystemExit(f"[DATA] Nhan {int(y.max())} vuot bang remap "
+                             f"({lut.numel()} muc). Sai bo du lieu?")
+        out = lut[y]
+        if (out < 0).any():
+            bad = torch.unique(y[out < 0]).tolist()
+            raise SystemExit(f"[DATA] Nhan {bad} khong co trong bang remap.")
+        y = out
     return x, y
 
 
@@ -227,7 +396,9 @@ def _load_iov_test_full():
     hit = _IOV_CACHE.get(("test",))
     if hit is not None:
         return hit
-    blob = _read_pt(os.path.join(iov_base_path(), "global_test_data.pt"))
+    # Use _find_file_in_candidates instead of strictly iov_base_path
+    path = _find_file_in_candidates("global_test_data.pt")
+    blob = _read_pt(path)
     x, y = _norm(blob["x"], blob["y"])
     _IOV_CACHE[("test",)] = (x, y)
     print(f"[IoV] cached test: {tuple(x.shape)} {x.dtype}, "
@@ -297,7 +468,7 @@ def iov_test_view():
 
 
 def read_client_data(dataset, idx, is_train=True, few_shot=0):
-    if dataset == "IoV":
+    if dataset in ("IoV", "IoT"):
         if is_train:
             x, y = _load_iov_train(idx)
         else:
