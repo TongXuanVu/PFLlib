@@ -6,7 +6,8 @@ import copy
 import time
 import random
 from utils.data_utils import (read_client_data, set_iov_task, set_iov_eval_cap,
-                              set_iov_fed_dir, set_iov_eval_cumulative)
+                              set_iov_fed_dir, set_iov_eval_cumulative,
+                              set_dataset, CAU_HINH_BO)
 from utils.dlg import DLG
 
 
@@ -14,7 +15,16 @@ class Server(object):
     def __init__(self, args, times):
         # Set up the main attributes
         self.args = args
-        set_iov_fed_dir(getattr(args, 'fed_dir', 'federated_data'))
+        # PHAI goi truoc set_iov_fed_dir: set_dataset() dat lai _IOV_FED_DIR ve
+        # mac dinh cua bo, roi -fed moi de len tren neu nguoi dung chi dinh.
+        _bo = getattr(args, 'data_variant', 'can_iov')
+        set_dataset(_bo)
+        _n = CAU_HINH_BO[_bo]['num_classes']
+        if args.num_classes != _n:
+            raise SystemExit(
+                f"[main] -ncl {args.num_classes} khong khop bo '{_bo}' "
+                f"(can {_n}). Dung lai de tranh chay sai am tham.")
+        set_iov_fed_dir(getattr(args, 'fed_dir', None) or CAU_HINH_BO[_bo]['fed_dir'])
         set_iov_task(getattr(args, 'task_id', 0))
         set_iov_eval_cumulative(getattr(args, 'eval_cumulative', False))
         set_iov_eval_cap(getattr(args, 'eval_sample_cap', 0))
@@ -189,10 +199,14 @@ class Server(object):
         class-incremental: task 2 bat dau tu mo hinh cuoi cua task 1."""
         if not os.path.exists(path):
             raise FileNotFoundError(f"--init_checkpoint khong ton tai: {path}")
+        # map_location: checkpoint duoc luu tu GPU, nap lai tren may chi co CPU
+        # (hoac nguoc lai) se hong neu khong chi dinh thiet bi.
         try:
-            self.global_model = torch.load(path, weights_only=False)
+            self.global_model = torch.load(path, map_location=self.device,
+                                           weights_only=False)
         except TypeError:
-            self.global_model = torch.load(path)
+            self.global_model = torch.load(path, map_location=self.device)
+        self.global_model.to(self.device)
         print(f"[init] bat dau tu checkpoint: {path}", flush=True)
 
     def load_model(self, round_num=None):
@@ -206,9 +220,11 @@ class Server(object):
         # 2.6 onwards torch.load defaults to weights_only=True and refuses it,
         # which broke -mode resume. The file is written by this same script.
         try:
-            self.global_model = torch.load(model_path, weights_only=False)
+            self.global_model = torch.load(model_path, map_location=self.device,
+                                           weights_only=False)
         except TypeError:  # torch < 1.13 has no weights_only argument
-            self.global_model = torch.load(model_path)
+            self.global_model = torch.load(model_path, map_location=self.device)
+        self.global_model.to(self.device)
 
     def model_exists(self):
         model_path = self._model_dir()

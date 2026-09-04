@@ -136,7 +136,6 @@ def _find_file_in_candidates(filename):
             if os.path.exists(p):
                 return p
     return os.path.join(iov_base_path(), filename)
-
 def _get_label_lut():
     """Bang tra nhan GOC -> nhan tuan tu theo thu tu task. None neu khong remap.
 
