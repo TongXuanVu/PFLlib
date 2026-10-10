@@ -8,3 +8,9 @@
 ## Cap nhat: task 1 da train xong round 29 (metric Round 0..29)
 - `IoV_task1_round_29.pt`: model cuoi task 1 (dung lam `-init` cho task 2). Metric "Round 30" = chinh model nay, CHUA do.
 - `IoV_PerAvg_full_t1_metrics_r0-29.csv`: metric Round 0..29. Luu y: Round 15 co loss 1.28 (nhay) ngay tai diem noi tiep.
+
+## Luu y BatchNorm khi resume
+`set_parameters`/aggregate chi chuyen `.parameters()`, KHONG chuyen buffer BatchNorm (running_mean/var). Client moi tao (sau resume) co buffer khoi tao
+=> lan cham dau tien sau resume (Round 15 da biet; "Round 30" khi resume rr=30) cho loss tang vot (~1.26-1.28) va F1 ve 0.3327. Day la hien tuong cua resume,
+khong phai ket qua that. Cell Kaggle resume LUI MOT round (rr=j tu round_{j-1}.pt) va bo dong cham dau tien.
+- `IoV_task1_round_28.pt`: model sau round 28, dung de chay lai round 29 va co Round 30 hop le.
