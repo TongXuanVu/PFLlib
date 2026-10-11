@@ -14,3 +14,8 @@
 => lan cham dau tien sau resume (Round 15 da biet; "Round 30" khi resume rr=30) cho loss tang vot (~1.26-1.28) va F1 ve 0.3327. Day la hien tuong cua resume,
 khong phai ket qua that. Cell Kaggle resume LUI MOT round (rr=j tu round_{j-1}.pt) va bo dong cham dau tien.
 - `IoV_task1_round_28.pt`: model sau round 28, dung de chay lai round 29 va co Round 30 hop le.
+
+## Task 1 FULL da xong (31 diem do, Round 0..30)
+- `IoV_task1_round_29.pt`: model cuoi task 1 MOI (chay lai round 29 tu round_28 de co Round 30 hop le). Dung chung cho full / 1% / 10-shot tu task 2.
+- `IoV_task1_round_29_old_truocBNfix.pt`: ban cu (truoc khi sua resume BatchNorm), chi giu de doi chieu.
+- `IoV_PerAvg_full_t1_metrics_r0-30_final.csv`: metric task 1 cuoi cung. Round 29 = ban hop le truoc khi cat; Round 30 loss 0.1441, Macro-F1 0.3852. Round 15 con loss 1.28 (hien tuong resume BN).
