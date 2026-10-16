@@ -6,7 +6,7 @@ import os
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
-from utils.data_utils import read_client_data, iov_test_view, iov_eval_weights
+from utils.data_utils import read_client_data, iov_test_view, iov_test_view_gpu, iov_eval_weights
 from utils.fast_loader import TensorBatches
 
 
@@ -34,6 +34,8 @@ class Client(object):
         # into 4.2M tiny kernel launches. Metrics are batch-size independent:
         # accuracy, summed loss and the confusion matrix all come out the same.
         self.test_batch_size = getattr(args, 'test_batch_size', 8192)
+        # -egpu: tap test nam tren GPU (xem iov_test_view_gpu). Mac dinh TAT.
+        self.eval_on_gpu = bool(getattr(args, 'eval_on_gpu', False))
         self.learning_rate = args.local_learning_rate
         self.local_epochs = args.local_epochs
         self.few_shot = args.few_shot
@@ -79,7 +81,10 @@ class Client(object):
             # iov_test_view() loc tap test ve dung cac lop cua task dang chay.
             # No shuffle: the metrics are order-independent, and shuffling
             # would cost a 42M-element randperm per client per round.
-            x, y = iov_test_view()
+            if self.eval_on_gpu and 'cuda' in str(self.device):
+                x, y = iov_test_view_gpu(self.device)
+            else:
+                x, y = iov_test_view()
             return TensorBatches(x=x, y=y, batch_size=batch_size,
                                  shuffle=False, drop_last=False)
         test_data = read_client_data(self.dataset, self.id, is_train=False, few_shot=self.few_shot)

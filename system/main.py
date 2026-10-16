@@ -449,6 +449,9 @@ if __name__ == "__main__":
                         help="Cap each class in the test set at this many rows and "
                              "reweight the confusion matrix, so metrics estimate the "
                              "full-test values at a fraction of the cost. 0 = off.")
+    parser.add_argument('-egpu', "--eval_on_gpu", action='store_true',
+                        help='IoV/IoT: dat tap test len GPU 1 lan roi danh gia ca client tren do '
+                             '(ket qua giong nhau, nhanh hon nhieu). Mac dinh tat.')
     parser.add_argument('-tbs', "--test_batch_size", type=int, default=8192,
                         help="Batch size used for evaluation only. Metrics are "
                              "batch-size independent, so this only affects speed.")

@@ -471,6 +471,32 @@ def iov_test_view():
     return _IOV_TEST_VIEW
 
 
+_IOV_TEST_GPU = None     # (x_cpu, device, x_gpu, y_gpu): ban sao tap test tren GPU
+
+
+def iov_test_view_gpu(device):
+    """Tap test (da loc) nam SAN tren GPU, tao 1 lan cho moi task.
+
+    Truoc day moi client, moi round deu cat x tren CPU, ep float16 -> float32 tren CPU
+    roi chuyen tung batch sang GPU: ~42 trieu dong x 31 dac trung x N client.
+    Giu nguyen dtype (float16) tren GPU va ep sang float32 tung batch tren GPU cho ra
+    CUNG gia tri dau vao, nen metric khong doi.
+    """
+    global _IOV_TEST_GPU
+    x, y = iov_test_view()
+    hit = _IOV_TEST_GPU
+    if hit is not None and hit[0] is x and hit[1] == str(device):
+        return hit[2], hit[3]
+    _IOV_TEST_GPU = None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    xg, yg = x.to(device), y.to(device)
+    _IOV_TEST_GPU = (x, str(device), xg, yg)
+    print(f"[IoV] tap test len GPU: {tuple(xg.shape)} {xg.dtype} "
+          f"({xg.numel() * xg.element_size() / 1024 ** 3:.2f} GB)", flush=True)
+    return xg, yg
+
+
 def read_client_data(dataset, idx, is_train=True, few_shot=0):
     if dataset in ("IoV", "IoT"):
         if is_train:
