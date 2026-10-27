@@ -74,15 +74,16 @@ class Client(object):
                                  drop_last=x.shape[0] >= batch_size)
         return DataLoader(train_data, batch_size, drop_last=True, shuffle=True)
 
-    def load_test_data(self, batch_size=None):
+    def load_test_data(self, batch_size=None, device=None):
         if batch_size == None:
             batch_size = self.test_batch_size
         if self.dataset in ("IoV", "IoT"):
             # iov_test_view() loc tap test ve dung cac lop cua task dang chay.
             # No shuffle: the metrics are order-independent, and shuffling
             # would cost a 42M-element randperm per client per round.
-            if self.eval_on_gpu and 'cuda' in str(self.device):
-                x, y = iov_test_view_gpu(self.device)
+            dv = device if device is not None else self.device
+            if self.eval_on_gpu and 'cuda' in str(dv):
+                x, y = iov_test_view_gpu(dv)
             else:
                 x, y = iov_test_view()
             return TensorBatches(x=x, y=y, batch_size=batch_size,
@@ -103,9 +104,15 @@ class Client(object):
         for param, new_param in zip(model.parameters(), new_params):
             param.data = new_param.data.clone()
 
-    def test_metrics(self):
-        testloaderfull = self.load_test_data()
-        self.model.eval()
+    def test_metrics(self, device=None):
+        # device khac self.device: danh gia tren GPU khac (-egpus 2). Mo hinh nho nen sao chep sang
+        # GPU do; ket qua giong het vi cung trong so va cung du lieu.
+        dev = device if device is not None else self.device
+        model = self.model
+        if str(dev) != str(self.device):
+            model = copy.deepcopy(self.model).to(dev)
+        testloaderfull = self.load_test_data(device=dev)
+        model.eval()
 
         C = self.num_classes
 
@@ -115,23 +122,23 @@ class Client(object):
         # synchronisations and a host round-trip of every prediction, per batch.
         # Khi tap test da bi lay mau, moi dong dai dien cho w[y] dong that.
         ew = iov_eval_weights() if self.dataset in ("IoV", "IoT") else None
-        ew = ew.to(self.device) if ew is not None else None
+        ew = ew.to(dev) if ew is not None else None
 
-        acc_t = torch.zeros((), dtype=torch.float64, device=self.device)
-        loss_t = torch.zeros((), dtype=torch.float64, device=self.device)
-        num_t = torch.zeros((), dtype=torch.float64, device=self.device)
+        acc_t = torch.zeros((), dtype=torch.float64, device=dev)
+        loss_t = torch.zeros((), dtype=torch.float64, device=dev)
+        num_t = torch.zeros((), dtype=torch.float64, device=dev)
         # Flat (C*C + 1) histogram; index = true * C + pred. The extra last
         # bucket collects labels outside [0, C), which sklearn silently drops.
-        cm_flat = torch.zeros(C * C + 1, dtype=torch.float64, device=self.device)
+        cm_flat = torch.zeros(C * C + 1, dtype=torch.float64, device=dev)
 
         with torch.no_grad():
             for x, y in testloaderfull:
                 if type(x) == type([]):
-                    x[0] = x[0].to(self.device)
+                    x[0] = x[0].to(dev)
                 else:
-                    x = x.to(self.device)
-                y = y.to(self.device)
-                output = self.model(x)
+                    x = x.to(dev)
+                y = y.to(dev)
+                output = model(x)
 
                 w = torch.ones_like(y, dtype=torch.float64) if ew is None else ew[y]
 

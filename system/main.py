@@ -452,6 +452,10 @@ if __name__ == "__main__":
     parser.add_argument('-egpu', "--eval_on_gpu", action='store_true',
                         help='IoV/IoT: dat tap test len GPU 1 lan roi danh gia ca client tren do '
                              '(ket qua giong nhau, nhanh hon nhieu). Mac dinh tat.')
+    parser.add_argument('-egpus', "--eval_gpus", type=int, default=1,
+                        help='So GPU dung de danh gia client song song (can -egpu va -did 0,1). Mac dinh 1.')
+    parser.add_argument('-cdnn', "--cudnn_benchmark", action='store_true',
+                        help='torch.backends.cudnn.benchmark=True (tu chon thuat toan conv nhanh nhat).')
     parser.add_argument('-tbs', "--test_batch_size", type=int, default=8192,
                         help="Batch size used for evaluation only. Metrics are "
                              "batch-size independent, so this only affects speed.")
@@ -550,6 +554,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
+    if getattr(args, 'cudnn_benchmark', False):
+        torch.backends.cudnn.benchmark = True
 
     if args.device == "cuda" and not torch.cuda.is_available():
         print("\ncuda is not avaiable.\n")

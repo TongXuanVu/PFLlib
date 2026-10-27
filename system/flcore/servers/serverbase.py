@@ -269,8 +269,26 @@ class Server(object):
         tot_correct = []
         tot_losses = []
         confusion_matrices = []
-        for c in self.clients:
-            ct, ns, loss, cm = c.test_metrics()
+
+        n_gpu = int(getattr(self.args, 'eval_gpus', 1) or 1)
+        if n_gpu > 1 and torch.cuda.device_count() >= n_gpu and 'cuda' in str(self.device):
+            # -egpus N: client i duoc danh gia tren GPU (i % N), moi GPU 1 luong. Thu tu ket qua giu nguyen.
+            from concurrent.futures import ThreadPoolExecutor
+            if self.dataset in ("IoV", "IoT"):
+                from utils.data_utils import iov_test_view
+                iov_test_view()   # dung view 1 lan o luong chinh de 2 luong khong tranh nhau tao
+            devs = [None] + [f"cuda:{k}" for k in range(1, n_gpu)]
+
+            def _work(k):
+                return [(i, c.test_metrics(devs[k])) for i, c in enumerate(self.clients) if i % n_gpu == k]
+
+            with ThreadPoolExecutor(max_workers=n_gpu) as ex:
+                parts = list(ex.map(_work, range(n_gpu)))
+            ordered = sorted((p for part in parts for p in part), key=lambda t: t[0])
+            results = [r for _, r in ordered]
+        else:
+            results = [c.test_metrics() for c in self.clients]
+        for ct, ns, loss, cm in results:
             tot_correct.append(ct*1.0)
             tot_losses.append(loss)
             num_samples.append(ns)

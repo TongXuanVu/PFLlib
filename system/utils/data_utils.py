@@ -471,7 +471,7 @@ def iov_test_view():
     return _IOV_TEST_VIEW
 
 
-_IOV_TEST_GPU = None     # (x_cpu, device, x_gpu, y_gpu): ban sao tap test tren GPU
+_IOV_TEST_GPU = {}       # str(device) -> (x_cpu, x_gpu, y_gpu): ban sao tap test tren tung GPU
 
 
 def iov_test_view_gpu(device):
@@ -482,16 +482,18 @@ def iov_test_view_gpu(device):
     Giu nguyen dtype (float16) tren GPU va ep sang float32 tung batch tren GPU cho ra
     CUNG gia tri dau vao, nen metric khong doi.
     """
-    global _IOV_TEST_GPU
     x, y = iov_test_view()
-    hit = _IOV_TEST_GPU
-    if hit is not None and hit[0] is x and hit[1] == str(device):
-        return hit[2], hit[3]
-    _IOV_TEST_GPU = None
+    key = str(device)
+    hit = _IOV_TEST_GPU.get(key)
+    if hit is not None and hit[0] is x:
+        return hit[1], hit[2]
+    # Test view doi (sang task khac) -> bo moi ban sao cu cua view cu tren moi GPU
+    for k in [k for k, v in _IOV_TEST_GPU.items() if v[0] is not x]:
+        del _IOV_TEST_GPU[k]
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     xg, yg = x.to(device), y.to(device)
-    _IOV_TEST_GPU = (x, str(device), xg, yg)
+    _IOV_TEST_GPU[key] = (x, xg, yg)
     print(f"[IoV] tap test len GPU: {tuple(xg.shape)} {xg.dtype} "
           f"({xg.numel() * xg.element_size() / 1024 ** 3:.2f} GB)", flush=True)
     return xg, yg
